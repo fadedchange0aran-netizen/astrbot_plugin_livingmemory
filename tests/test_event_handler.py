@@ -177,6 +177,29 @@ async def test_handle_memory_reflection_triggers_storage_task(
 
 
 @pytest.mark.asyncio
+async def test_handle_memory_reflection_skips_group_core_storage_by_default(
+    handler, conversation_manager, memory_engine
+):
+    event = _make_event(group=True)
+    resp = _make_resp("assistant answer")
+    conversation_manager.get_messages_range = AsyncMock(
+        return_value=[Mock(group_id="group-1"), Mock(group_id="group-1")]
+    )
+
+    with patch(
+        "astrbot_plugin_livingmemory.core.event_handler_modules.memory_reflection.get_persona_id",
+        new_callable=AsyncMock,
+    ) as get_persona:
+        get_persona.return_value = "persona_1"
+        await handler.handle_memory_reflection(event, resp)
+        await handler.shutdown()
+
+    assert conversation_manager.get_messages_range.await_count >= 1
+    memory_engine.add_memory.assert_not_awaited()
+    conversation_manager.update_session_metadata.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_handle_all_group_messages_and_limit_cleanup(
     handler, conversation_manager
 ):

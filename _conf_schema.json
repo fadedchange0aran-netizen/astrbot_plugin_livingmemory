@@ -238,6 +238,12 @@
                 "hint": "累计对话达到该轮次（一问一答为一轮）后触发总结并写入记忆。",
                 "type": "int",
                 "default": 10
+            },
+            "store_group_memories_to_core": {
+                "description": "群聊自动写入核心长期记忆",
+                "hint": "关闭后，群聊仍可被捕获用于上下文和后续处理，但自动总结不会直接写入核心长期记忆。",
+                "type": "bool",
+                "default": false
             }
         }
     },

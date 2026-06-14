@@ -401,8 +401,18 @@ class MemoryReflection:
                     )
                     return
 
+                store_group_memories_to_core = bool(
+                    self.config_manager.get(
+                        "reflection_engine.store_group_memories_to_core", False
+                    )
+                )
+
+                should_store_to_core = not (
+                    is_group_chat and not store_group_memories_to_core
+                )
+
                 # 正常流程：添加到记忆引擎
-                if self.memory_engine:
+                if self.memory_engine and should_store_to_core:
                     owner_id = get_owner_id(self.config_manager, event)
                     await self.memory_engine.add_memory(
                         content=content,
@@ -416,6 +426,10 @@ class MemoryReflection:
 
                     logger.info(
                         f"[{session_id}] 成功存储对话记忆（{len(history_messages)}条消息，重要性={importance:.2f}）"
+                    )
+                elif is_group_chat and not store_group_memories_to_core:
+                    logger.info(
+                        f"[{session_id}] 群聊自动总结已生成，但按配置跳过写入核心长期记忆"
                     )
 
                 # 成功：更新已总结的位置，清除待处理记录

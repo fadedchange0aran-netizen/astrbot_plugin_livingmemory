@@ -94,6 +94,9 @@ class ReflectionEngineConfig(BaseModel):
     summary_trigger_rounds: int = Field(
         default=10, ge=1, le=100, description="触发反思的对话轮次"
     )
+    store_group_memories_to_core: bool = Field(
+        default=False, description="是否将群聊自动总结直接写入核心长期记忆"
+    )
 
 
 class AgentToolsConfig(BaseModel):
