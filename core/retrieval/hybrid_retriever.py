@@ -105,7 +105,7 @@ class HybridRetriever:
         Args:
             content: 记忆内容
             metadata: 元数据(必须包含:importance, create_time, last_access_time,
-                     session_id, persona_id)
+                     owner_id, session_id, persona_id)
 
         Returns:
             int: 文档ID(两个索引中一致)
@@ -120,6 +120,8 @@ class HybridRetriever:
             metadata["create_time"] = time.time()
         if "last_access_time" not in metadata:
             metadata["last_access_time"] = time.time()
+        if "owner_id" not in metadata:
+            metadata["owner_id"] = None
         if "session_id" not in metadata:
             metadata["session_id"] = None
         if "persona_id" not in metadata:
@@ -139,6 +141,7 @@ class HybridRetriever:
         k: int = 10,
         session_id: str | None = None,
         persona_id: str | None = None,
+        owner_id: str | None = None,
     ) -> list[HybridResult]:
         """
         执行混合检索
@@ -162,11 +165,23 @@ class HybridRetriever:
         ) = await asyncio.gather(
             self._search_route(
                 "BM25",
-                self.bm25_retriever.search(query, k, session_id, persona_id),
+                self.bm25_retriever.search(
+                    query,
+                    k,
+                    session_id,
+                    persona_id,
+                    owner_id=owner_id,
+                ),
             ),
             self._search_route(
                 "向量",
-                self.vector_retriever.search(query, k, session_id, persona_id),
+                self.vector_retriever.search(
+                    query,
+                    k,
+                    session_id,
+                    persona_id,
+                    owner_id=owner_id,
+                ),
             ),
         )
 

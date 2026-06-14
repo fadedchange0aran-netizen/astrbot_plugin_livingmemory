@@ -11,7 +11,7 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.platform import MessageType
 from astrbot.api.provider import LLMResponse
 
-from ..utils import get_persona_id
+from ..utils import get_owner_id, get_persona_id
 
 if TYPE_CHECKING:
     from ..base.config_manager import ConfigManager
@@ -403,6 +403,7 @@ class MemoryReflection:
 
                 # 正常流程：添加到记忆引擎
                 if self.memory_engine:
+                    owner_id = get_owner_id(self.config_manager, event)
                     await self.memory_engine.add_memory(
                         content=content,
                         session_id=session_id,
@@ -410,6 +411,7 @@ class MemoryReflection:
                         importance=importance,
                         metadata=metadata,
                         atoms=atoms,
+                        owner_id=owner_id,
                     )
 
                     logger.info(

@@ -17,6 +17,7 @@ from ..utils import (
     format_memories_for_fake_tool_call,
     format_memories_for_fake_tool_call_deepseek_v4,
     format_memories_for_injection,
+    get_owner_id,
     get_persona_id,
 )
 
@@ -138,6 +139,7 @@ class MemoryRecall:
                 use_persona_filtering = filtering_config.get(
                     "use_persona_filtering", True
                 )
+                use_owner_filtering = filtering_config.get("use_owner_filtering", True)
                 use_session_filtering = filtering_config.get(
                     "use_session_filtering", True
                 )
@@ -149,7 +151,9 @@ class MemoryRecall:
                 # 注意：on_llm_request 钩子在 _ensure_persona_and_skills 之前触发，
                 # 因此不能直接依赖 req.system_prompt 已注入人格，需自行走完整优先级。
                 persona_id = await get_persona_id(self.context, event)
+                owner_id = get_owner_id(self.config_manager, event)
 
+                recall_owner_id = owner_id if use_owner_filtering else None
                 recall_session_id = session_id if use_session_filtering else None
                 recall_persona_id = persona_id if use_persona_filtering else None
 
@@ -192,6 +196,7 @@ class MemoryRecall:
                 recalled_memories = await self.memory_engine.search_memories(
                     query=query_for_search,
                     k=self.config_manager.get("recall_engine.top_k", 5),
+                    owner_id=recall_owner_id,
                     session_id=recall_session_id,
                     persona_id=recall_persona_id,
                 )

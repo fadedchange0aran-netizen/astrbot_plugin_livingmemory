@@ -148,6 +148,7 @@ class BM25Retriever:
         limit: int = 50,
         session_id: str | None = None,
         persona_id: str | None = None,
+        owner_id: str | None = None,
     ) -> list[BM25Result]:
         """
         执行BM25搜索
@@ -182,7 +183,9 @@ class BM25Retriever:
 
         # 有过滤条件时大幅增加预取量，避免过滤后结果不足
         # Python 层过滤（BM25）比 FAISS 内部过滤损耗更大，需要更多候选
-        has_filters = session_id is not None or persona_id is not None
+        has_filters = (
+            owner_id is not None or session_id is not None or persona_id is not None
+        )
         fetch_limit = limit * 10 if has_filters else limit * 2
 
         async with self._connect() as db:
@@ -233,6 +236,10 @@ class BM25Retriever:
                 metadata = doc["metadata"]
 
                 # 应用过滤器 - 直接比较完整的 session_id / persona_id
+                if owner_id is not None:
+                    stored_owner_id = metadata.get("owner_id")
+                    if stored_owner_id != owner_id:
+                        continue
                 if session_id is not None:
                     stored_session_id = metadata.get("session_id")
                     if stored_session_id != session_id:

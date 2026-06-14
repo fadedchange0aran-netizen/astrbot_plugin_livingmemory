@@ -124,8 +124,18 @@ class ForgettingAgentConfig(BaseModel):
 class FilteringConfig(BaseModel):
     """过滤配置"""
 
+    use_owner_filtering: bool = Field(default=True, description="是否使用归属者过滤")
     use_persona_filtering: bool = Field(default=True, description="是否使用人格过滤")
-    use_session_filtering: bool = Field(default=True, description="是否使用会话过滤")
+    use_session_filtering: bool = Field(default=False, description="是否使用会话过滤")
+
+
+class OwnerConfig(BaseModel):
+    """记忆归属配置"""
+
+    owner_id: str = Field(
+        default="",
+        description="长期记忆归属键。留空时回退到当前发送者 ID。",
+    )
 
 
 class ProviderConfig(BaseModel):
@@ -255,6 +265,7 @@ class LivingMemoryConfig(BaseModel):
     forgetting_agent: ForgettingAgentConfig = Field(
         default_factory=ForgettingAgentConfig
     )
+    owner_settings: OwnerConfig = Field(default_factory=OwnerConfig)
     filtering_settings: FilteringConfig = Field(default_factory=FilteringConfig)
     provider_settings: ProviderConfig = Field(default_factory=ProviderConfig)
     migration_settings: MigrationSettings = Field(default_factory=MigrationSettings)

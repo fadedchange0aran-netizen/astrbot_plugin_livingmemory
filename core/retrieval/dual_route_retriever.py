@@ -39,11 +39,16 @@ class DualRouteRetriever:
         k: int = 10,
         session_id: str | None = None,
         persona_id: str | None = None,
+        owner_id: str | None = None,
     ) -> list[HybridResult]:
         """Run both retrieval routes and merge their memory candidates."""
         doc_results, graph_results = await asyncio.gather(
             self.document_retriever.search(
-                query, max(k * 2, k), session_id, persona_id
+                query,
+                max(k * 2, k),
+                session_id,
+                persona_id,
+                owner_id=owner_id,
             ),
             self.graph_retriever.search(query, max(k * 2, k), session_id, persona_id),
         )
@@ -162,6 +167,13 @@ class DualRouteRetriever:
                     score_breakdown=score_breakdown,
                 )
             )
+
+        if owner_id is not None:
+            merged_results = [
+                item
+                for item in merged_results
+                if (item.metadata or {}).get("owner_id") == owner_id
+            ]
 
         merged_results.sort(key=lambda item: item.final_score, reverse=True)
         return merged_results[:k]

@@ -233,6 +233,41 @@ async def get_persona_id(context: Context, event: AstrMessageEvent) -> str | Non
         return None
 
 
+def get_owner_id(
+    config_manager: Any | None,
+    event: AstrMessageEvent,
+) -> str | None:
+    """
+    解析当前长期记忆的 owner_id。
+
+    优先使用显式配置的固定 owner_id；若未配置，则回退到当前发送者 ID，
+    这样至少能先打通「同一人跨 session 共享长期记忆」。
+    """
+    try:
+        if config_manager is not None:
+            configured_owner_id = str(
+                config_manager.get("owner_settings.owner_id", "") or ""
+            ).strip()
+            if configured_owner_id:
+                return configured_owner_id
+
+        sender_id = None
+        if hasattr(event, "get_sender_id"):
+            sender_id = event.get_sender_id()
+        elif hasattr(event, "sender_id"):
+            sender_id = event.sender_id
+
+        normalized_sender_id = str(sender_id or "").strip()
+        if normalized_sender_id:
+            return normalized_sender_id
+
+        fallback_session_id = str(getattr(event, "unified_msg_origin", "") or "").strip()
+        return fallback_session_id or None
+    except Exception as e:
+        logger.debug(f"获取 owner_id 失败: {e}")
+        return None
+
+
 def extract_json_from_response(text: str) -> str:
     """
     从可能包含 Markdown 代码块的文本中提取纯 JSON 字符串。

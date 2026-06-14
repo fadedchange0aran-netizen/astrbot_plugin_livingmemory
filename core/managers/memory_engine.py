@@ -380,6 +380,7 @@ class MemoryEngine:
         self,
         query: str,
         k: int,
+        owner_id: str | None,
         session_id: str | None,
         persona_id: str | None,
     ) -> tuple[Any, ...]:
@@ -387,6 +388,7 @@ class MemoryEngine:
             self._search_cache_generation,
             self._normalize_cache_query(query),
             int(k),
+            owner_id or "",
             session_id or "",
             persona_id or "",
             bool(self.dual_route_retriever is not None),
@@ -973,6 +975,7 @@ class MemoryEngine:
         importance: float = 0.5,
         metadata: dict[str, Any] | None = None,
         atoms: list | None = None,
+        owner_id: str | None = None,
     ) -> int:
         """
         添加新记忆
@@ -994,6 +997,7 @@ class MemoryEngine:
             "add",
             {
                 "content_preview": content[:500],
+                "owner_id": owner_id,
                 "session_id": session_id,
                 "persona_id": persona_id,
                 "importance": importance,
@@ -1008,6 +1012,7 @@ class MemoryEngine:
         # 只在查询/过滤时才提取UUID进行匹配，存储时保留完整信息
         current_time = time.time()
         full_metadata = {
+            "owner_id": owner_id,
             "session_id": session_id,  # 保存完整的 unified_msg_origin
             "persona_id": persona_id,  # 保存完整的 persona_id
             "importance": max(0.0, min(1.0, importance)),  # 限制在0-1范围
@@ -1019,6 +1024,9 @@ class MemoryEngine:
         # 注意：先合并外部metadata，再确保时间字段不被覆盖
         if metadata:
             full_metadata.update(metadata)
+
+        if owner_id is not None:
+            full_metadata["owner_id"] = owner_id
 
         # 确保时间字段始终存在且不被外部metadata覆盖
         full_metadata["create_time"] = current_time
@@ -1150,6 +1158,7 @@ class MemoryEngine:
         k: int = 5,
         session_id: str | None = None,
         persona_id: str | None = None,
+        owner_id: str | None = None,
     ) -> list[HybridResult]:
         """
         检索相关记忆
@@ -1166,7 +1175,7 @@ class MemoryEngine:
         if not query or not query.strip():
             return []
 
-        cache_key = self._search_cache_key(query, k, session_id, persona_id)
+        cache_key = self._search_cache_key(query, k, owner_id, session_id, persona_id)
         cached_results = self._get_cached_search_results(cache_key)
         if cached_results is not None:
             for result in cached_results:
@@ -1191,12 +1200,17 @@ class MemoryEngine:
                 k,
                 session_id,
                 persona_id,
+                owner_id=owner_id,
             )
         else:
             if self.hybrid_retriever is None:
                 raise RuntimeError("混合检索器未初始化")
             results = await self.hybrid_retriever.search(
-                query, k, session_id, persona_id
+                query,
+                k,
+                session_id,
+                persona_id,
+                owner_id=owner_id,
             )
 
         # 异步更新访问时间(不阻塞返回)

@@ -13,7 +13,7 @@ from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 
 from ..base.config_manager import ConfigManager
-from ..utils import get_persona_id
+from ..utils import get_owner_id, get_persona_id
 
 
 def _json_result(data: dict[str, Any]) -> str:
@@ -93,16 +93,19 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
         try:
             event = context.context.event
             filtering_config = self.config_manager.filtering_settings
+            use_owner_filtering = filtering_config.get("use_owner_filtering", True)
             use_persona_filtering = filtering_config.get("use_persona_filtering", True)
             use_session_filtering = filtering_config.get("use_session_filtering", True)
 
             session_id = event.unified_msg_origin
+            owner_id = get_owner_id(self.config_manager, event)
             persona_id = (
                 await get_persona_id(self.context, event)
                 if use_persona_filtering
                 else None
             )
 
+            recall_owner_id = owner_id if use_owner_filtering else None
             recall_session_id = session_id if use_session_filtering else None
             recall_persona_id = persona_id if use_persona_filtering else None
 
@@ -119,6 +122,7 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
             memories = await self.memory_engine.search_memories(
                 query=cleaned_query,
                 k=limited_k,
+                owner_id=recall_owner_id,
                 session_id=recall_session_id,
                 persona_id=recall_persona_id,
             )
@@ -132,6 +136,7 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
                         "content": memory.content,
                         "score": memory.final_score,
                         "importance": metadata.get("importance"),
+                        "owner_id": metadata.get("owner_id"),
                         "session_id": metadata.get("session_id"),
                         "persona_id": metadata.get("persona_id"),
                         "create_time": metadata.get("create_time"),
@@ -143,6 +148,7 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
                 {
                     "query": cleaned_query,
                     "applied_filters": {
+                        "owner_filtered": use_owner_filtering,
                         "session_filtered": use_session_filtering,
                         "persona_filtered": use_persona_filtering,
                     },

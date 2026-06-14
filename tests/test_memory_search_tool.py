@@ -32,6 +32,13 @@ def _make_run_context():
     return run_context
 
 
+def _patch_owner_id():
+    return patch(
+        "astrbot_plugin_livingmemory.core.tools.memory_search_tool.get_owner_id",
+        return_value="bia",
+    )
+
+
 @pytest.mark.asyncio
 async def test_memory_search_tool_uses_filtering_settings(memory_engine, astr_context):
     tool = MemorySearchTool(
@@ -53,18 +60,21 @@ async def test_memory_search_tool_uses_filtering_settings(memory_engine, astr_co
         "astrbot_plugin_livingmemory.core.tools.memory_search_tool.get_persona_id",
         new_callable=AsyncMock,
     ) as get_persona:
-        get_persona.return_value = "persona_a"
-        raw_result = await tool.call(_make_run_context(), query="喜欢的游戏", k=6)
+        with _patch_owner_id():
+            get_persona.return_value = "persona_a"
+            raw_result = await tool.call(_make_run_context(), query="喜欢的游戏", k=6)
 
     result = json.loads(raw_result)
     assert result["query"] == "喜欢的游戏"
     assert result["applied_filters"] == {
+        "owner_filtered": True,
         "session_filtered": True,
         "persona_filtered": True,
     }
     memory_engine.search_memories.assert_awaited_once_with(
         query="喜欢的游戏",
         k=6,
+        owner_id="bia",
         session_id="test:private:session-1",
         persona_id="persona_a",
     )
@@ -91,12 +101,14 @@ async def test_memory_search_tool_disables_filters_when_config_disabled(
         "astrbot_plugin_livingmemory.core.tools.memory_search_tool.get_persona_id",
         new_callable=AsyncMock,
     ) as get_persona:
-        get_persona.return_value = "persona_a"
-        await tool.call(_make_run_context(), query="项目约定")
+        with _patch_owner_id():
+            get_persona.return_value = "persona_a"
+            await tool.call(_make_run_context(), query="项目约定")
 
     memory_engine.search_memories.assert_awaited_once_with(
         query="项目约定",
         k=5,
+        owner_id="bia",
         session_id=None,
         persona_id=None,
     )
@@ -131,8 +143,9 @@ async def test_memory_search_tool_serializes_results(memory_engine, astr_context
         "astrbot_plugin_livingmemory.core.tools.memory_search_tool.get_persona_id",
         new_callable=AsyncMock,
     ) as get_persona:
-        get_persona.return_value = "persona_a"
-        raw_result = await tool.call(_make_run_context(), query="游戏偏好")
+        with _patch_owner_id():
+            get_persona.return_value = "persona_a"
+            raw_result = await tool.call(_make_run_context(), query="游戏偏好")
 
     result = json.loads(raw_result)
     assert result["count"] == 1
@@ -141,6 +154,7 @@ async def test_memory_search_tool_serializes_results(memory_engine, astr_context
         "content": "用户喜欢高难度动作游戏",
         "score": 0.91,
         "importance": 0.8,
+        "owner_id": None,
         "session_id": "test:private:session-1",
         "persona_id": "persona_a",
         "create_time": 100.0,
@@ -172,8 +186,9 @@ async def test_memory_search_tool_serializes_non_dict_metadata(
         "astrbot_plugin_livingmemory.core.tools.memory_search_tool.get_persona_id",
         new_callable=AsyncMock,
     ) as get_persona:
-        get_persona.return_value = "persona_a"
-        raw_result = await tool.call(_make_run_context(), query="摄影")
+        with _patch_owner_id():
+            get_persona.return_value = "persona_a"
+            raw_result = await tool.call(_make_run_context(), query="摄影")
 
     result = json.loads(raw_result)
     assert result["results"][0] == {
@@ -181,6 +196,7 @@ async def test_memory_search_tool_serializes_non_dict_metadata(
         "content": "用户提到过想学摄影",
         "score": 0.55,
         "importance": None,
+        "owner_id": None,
         "session_id": None,
         "persona_id": None,
         "create_time": None,
@@ -200,12 +216,14 @@ async def test_memory_search_tool_limits_k_by_config(memory_engine, astr_context
         "astrbot_plugin_livingmemory.core.tools.memory_search_tool.get_persona_id",
         new_callable=AsyncMock,
     ) as get_persona:
-        get_persona.return_value = "persona_a"
-        await tool.call(_make_run_context(), query="偏好", k=9)
+        with _patch_owner_id():
+            get_persona.return_value = "persona_a"
+            await tool.call(_make_run_context(), query="偏好", k=9)
 
     memory_engine.search_memories.assert_awaited_once_with(
         query="偏好",
         k=4,
+        owner_id="bia",
         session_id="test:private:session-1",
         persona_id="persona_a",
     )
@@ -232,16 +250,19 @@ async def test_memory_search_tool_clamps_low_k_to_one(memory_engine, astr_contex
         "astrbot_plugin_livingmemory.core.tools.memory_search_tool.get_persona_id",
         new_callable=AsyncMock,
     ) as get_persona:
-        get_persona.return_value = "persona_a"
+        with _patch_owner_id():
+            get_persona.return_value = "persona_a"
 
-        await tool.call(_make_run_context(), query="test query", k=0)
-        called_k_zero = memory_engine.search_memories.await_args.kwargs["k"]
-        assert called_k_zero == 1
+            await tool.call(_make_run_context(), query="test query", k=0)
+            called_kwargs_zero = memory_engine.search_memories.await_args.kwargs
+            assert called_kwargs_zero["k"] == 1
+            assert called_kwargs_zero["owner_id"] == "bia"
 
-        memory_engine.search_memories.reset_mock()
-        await tool.call(_make_run_context(), query="test query", k=-3)
-        called_k_negative = memory_engine.search_memories.await_args.kwargs["k"]
-        assert called_k_negative == 1
+            memory_engine.search_memories.reset_mock()
+            await tool.call(_make_run_context(), query="test query", k=-3)
+            called_kwargs_negative = memory_engine.search_memories.await_args.kwargs
+            assert called_kwargs_negative["k"] == 1
+            assert called_kwargs_negative["owner_id"] == "bia"
 
 
 @pytest.mark.asyncio
@@ -259,12 +280,14 @@ async def test_memory_search_tool_falls_back_to_default_k_for_invalid_input(
         "astrbot_plugin_livingmemory.core.tools.memory_search_tool.get_persona_id",
         new_callable=AsyncMock,
     ) as get_persona:
-        get_persona.return_value = "persona_a"
-        await tool.call(_make_run_context(), query="test query", k="bad")
+        with _patch_owner_id():
+            get_persona.return_value = "persona_a"
+            await tool.call(_make_run_context(), query="test query", k="bad")
 
     memory_engine.search_memories.assert_awaited_once_with(
         query="test query",
         k=3,
+        owner_id="bia",
         session_id="test:private:session-1",
         persona_id="persona_a",
     )

@@ -108,6 +108,11 @@ class ConfigManager:
         return self.get_section("reflection_engine")
 
     @property
+    def owner_settings(self) -> dict[str, Any]:
+        """记忆归属设置"""
+        return self.get_section("owner_settings")
+
+    @property
     def filtering_settings(self) -> dict[str, Any]:
         """过滤设置"""
         return self.get_section("filtering_settings")

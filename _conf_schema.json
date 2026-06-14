@@ -192,10 +192,28 @@
             }
         }
     },
+    "owner_settings": {
+        "description": "长期记忆归属设置",
+        "type": "object",
+        "items": {
+            "owner_id": {
+                "description": "长期记忆 owner_id",
+                "hint": "留空时自动回退到当前发送者 ID；如果希望跨平台/跨会话共享同一套长期记忆，可手动指定固定 owner_id。",
+                "type": "string",
+                "default": ""
+            }
+        }
+    },
     "filtering_settings": {
         "description": "记忆隔离设置",
         "type": "object",
         "items": {
+            "use_owner_filtering": {
+                "description": "按记忆归属召回",
+                "hint": "开启后优先按 owner_id 召回长期记忆，适合 owner-first 的长期记忆口径。",
+                "type": "bool",
+                "default": true
+            },
             "use_persona_filtering": {
                 "description": "按人格隔离记忆",
                 "hint": "开启后只召回与当前人格相关的记忆，不同人格的记忆互不干扰。",
@@ -204,9 +222,9 @@
             },
             "use_session_filtering": {
                 "description": "按会话隔离记忆",
-                "hint": "开启后每个会话的记忆独立存储，不同会话之间不共享记忆。",
+                "hint": "开启后每个会话的记忆独立存储，不同会话之间不共享记忆。owner-first 方案建议关闭。",
                 "type": "bool",
-                "default": true
+                "default": false
             }
         }
     },

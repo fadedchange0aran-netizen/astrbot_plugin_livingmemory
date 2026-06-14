@@ -14,6 +14,7 @@ from .base.config_manager import ConfigManager
 from .i18n_backend import t, t_list
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
+from .utils import get_owner_id
 from .validators.index_validator import IndexValidator
 
 
@@ -143,8 +144,15 @@ class CommandHandler:
 
         try:
             session_id = event.unified_msg_origin
+            filtering_config = self.config_manager.filtering_settings
+            owner_id = get_owner_id(self.config_manager, event)
+            use_owner_filtering = filtering_config.get("use_owner_filtering", True)
+            use_session_filtering = filtering_config.get("use_session_filtering", True)
             results = await self.memory_engine.search_memories(
-                query=query.strip(), k=k, session_id=session_id
+                query=query.strip(),
+                k=k,
+                owner_id=owner_id if use_owner_filtering else None,
+                session_id=session_id if use_session_filtering else None,
             )
 
             if not results:
@@ -428,6 +436,7 @@ class CommandHandler:
                 "message_count": actual_count - last_summarized_index,
                 "triggered_by": "manual",
             }
+            owner_id = get_owner_id(self.config_manager, event)
 
             await self.memory_engine.add_memory(
                 content=content,
@@ -436,6 +445,7 @@ class CommandHandler:
                 importance=importance,
                 metadata=metadata,
                 atoms=atoms,
+                owner_id=owner_id,
             )
 
             await self.conversation_manager.update_session_metadata(

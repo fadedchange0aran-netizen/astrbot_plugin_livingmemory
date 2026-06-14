@@ -13,7 +13,8 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 
-from ..utils import get_persona_id
+from ..base.config_manager import ConfigManager
+from ..utils import get_owner_id, get_persona_id
 
 
 def _json_result(data: dict[str, Any]) -> str:
@@ -36,6 +37,7 @@ class MemoryMemorizeTool(FunctionTool[AstrAgentContext]):
     __pydantic_config__ = {"arbitrary_types_allowed": True}
 
     context: Any = None
+    config_manager: ConfigManager | None = None
     memory_engine: Any = None
     memory_processor: Any = None
 
@@ -119,6 +121,7 @@ class MemoryMemorizeTool(FunctionTool[AstrAgentContext]):
         try:
             event = context.context.event
             session_id = event.unified_msg_origin
+            owner_id = get_owner_id(self.config_manager, event)
             persona_id = await get_persona_id(self.context, event)
             is_group_chat = event.get_message_type() == MessageType.GROUP_MESSAGE
 
@@ -153,6 +156,7 @@ class MemoryMemorizeTool(FunctionTool[AstrAgentContext]):
                 persona_id=persona_id,
                 importance=normalized_importance,
                 metadata=metadata,
+                owner_id=owner_id,
             )
 
             return _json_result(
@@ -161,6 +165,7 @@ class MemoryMemorizeTool(FunctionTool[AstrAgentContext]):
                     "id": memory_id,
                     "content": content,
                     "importance": normalized_importance,
+                    "owner_id": owner_id,
                     "session_id": session_id,
                     "persona_id": persona_id,
                 }

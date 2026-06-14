@@ -28,9 +28,9 @@ class VectorRetriever:
     封装AstrBot的FaissVecDB,提供统一的向量相似度检索接口。
     主要特性:
     1. 保持查询文本原样检索，避免额外预处理带来的行为分叉
-    2. 元数据包含:importance, create_time, last_access_time, session_id, persona_id
+    2. 元数据包含:importance, create_time, last_access_time, owner_id, session_id, persona_id
     3. 相似度分数已归一化到[0,1]区间
-    4. 支持通过metadata过滤session_id和persona_id
+    4. 支持通过metadata过滤owner_id / session_id / persona_id
     5. ID映射缓存优化UUID查询性能
     """
 
@@ -76,7 +76,7 @@ class VectorRetriever:
         Args:
             content: 文档内容
             metadata: 文档元数据(必须包含:importance, create_time, last_access_time,
-                     session_id, persona_id)
+                     owner_id, session_id, persona_id)
 
         Returns:
             int: 文档ID
@@ -89,6 +89,7 @@ class VectorRetriever:
             "importance",
             "create_time",
             "last_access_time",
+            "owner_id",
             "session_id",
             "persona_id",
         ]
@@ -101,7 +102,7 @@ class VectorRetriever:
                     import time
 
                     metadata[field] = time.time()
-                else:  # session_id, persona_id
+                else:  # owner_id, session_id, persona_id
                     metadata[field] = None
 
         # 插入到Faiss向量库，同样截断过长内容防止 embedding token 超限
@@ -128,6 +129,7 @@ class VectorRetriever:
         k: int = 10,
         session_id: str | None = None,
         persona_id: str | None = None,
+        owner_id: str | None = None,
     ) -> list[VectorResult]:
         """
         执行向量相似度搜索
@@ -160,6 +162,8 @@ class VectorRetriever:
 
         # 构建元数据过滤器
         metadata_filters = {}
+        if owner_id is not None:
+            metadata_filters["owner_id"] = owner_id
         if session_id is not None:
             metadata_filters["session_id"] = session_id
         if persona_id is not None:
