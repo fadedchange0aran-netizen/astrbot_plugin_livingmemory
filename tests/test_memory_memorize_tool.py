@@ -52,6 +52,13 @@ def _make_run_context(message_type=MessageType.FRIEND_MESSAGE):
     return run_context
 
 
+def _patch_owner_id():
+    return patch(
+        "astrbot_plugin_livingmemory.core.tools.memory_memorize_tool.get_owner_id",
+        return_value="bia",
+    )
+
+
 @pytest.mark.asyncio
 async def test_memory_memorize_tool_writes_current_session_and_persona(
     memory_engine, memory_processor
@@ -66,21 +73,24 @@ async def test_memory_memorize_tool_writes_current_session_and_persona(
         "astrbot_plugin_livingmemory.core.tools.memory_memorize_tool.get_persona_id",
         new_callable=AsyncMock,
     ) as get_persona:
-        get_persona.return_value = "persona_a"
-        raw_result = await tool.call(
-            _make_run_context(),
-            memory="用户喜欢黑咖啡",
-            topics=["饮食偏好"],
-            key_facts=["不加糖"],
-            importance=0.8,
-        )
+        with _patch_owner_id():
+            get_persona.return_value = "persona_a"
+            raw_result = await tool.call(
+                _make_run_context(),
+                memory="用户喜欢黑咖啡",
+                topics=["饮食偏好"],
+                key_facts=["不加糖"],
+                importance=0.8,
+            )
 
     result = json.loads(raw_result)
     assert result["memorized"] is True
+    assert result["owner_id"] == "bia"
     assert result["session_id"] == "test:private:session-1"
     assert result["persona_id"] == "persona_a"
     memory_engine.add_memory.assert_awaited_once()
     call_kwargs = memory_engine.add_memory.await_args.kwargs
+    assert call_kwargs["owner_id"] == "bia"
     assert call_kwargs["session_id"] == "test:private:session-1"
     assert call_kwargs["persona_id"] == "persona_a"
 
