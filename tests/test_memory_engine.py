@@ -188,6 +188,81 @@ async def test_memory_engine_add_search_get_delete(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_memory_engine_persists_owner_id_in_metadata(tmp_path: Path):
+    db_path = tmp_path / "memory_owner.db"
+    engine = MemoryEngine(
+        db_path=str(db_path),
+        faiss_db=_FakeFaissDB(),
+        config={"fallback_enabled": True, "rrf_k": 60},
+    )
+    await engine.initialize()
+
+    memory_id = await engine.add_memory(
+        content="晓菡喜欢苹果",
+        session_id="test:private:s1",
+        persona_id="persona_1",
+        importance=0.8,
+        metadata={"topics": ["饮食"]},
+        owner_id="bia",
+    )
+
+    result = await engine.get_memory(memory_id)
+    assert result is not None
+    assert result["metadata"]["owner_id"] == "bia"
+    assert engine.faiss_db.docs[memory_id]["metadata"]["owner_id"] == "bia"
+
+    await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_memory_engine_owner_filtering_recalls_across_sessions(tmp_path: Path):
+    db_path = tmp_path / "memory_owner_search.db"
+    engine = MemoryEngine(
+        db_path=str(db_path),
+        faiss_db=_FakeFaissDB(),
+        config={"fallback_enabled": True, "rrf_k": 60},
+    )
+    await engine.initialize()
+
+    owner_first = await engine.add_memory(
+        content="晓菡喜欢苹果和酸奶",
+        session_id="test:private:s1",
+        persona_id="persona_1",
+        importance=0.8,
+        owner_id="bia",
+    )
+    owner_second = await engine.add_memory(
+        content="晓菡昨天又提到想买苹果",
+        session_id="test:private:s2",
+        persona_id="persona_1",
+        importance=0.7,
+        owner_id="bia",
+    )
+    other_owner = await engine.add_memory(
+        content="另一个人也喜欢苹果",
+        session_id="test:private:s3",
+        persona_id="persona_1",
+        importance=0.6,
+        owner_id="other",
+    )
+
+    searched = await engine.search_memories(
+        query="苹果",
+        k=10,
+        session_id=None,
+        persona_id="persona_1",
+        owner_id="bia",
+    )
+
+    searched_ids = {item.doc_id for item in searched}
+    assert owner_first in searched_ids
+    assert owner_second in searched_ids
+    assert other_owner not in searched_ids
+
+    await engine.close()
+
+
+@pytest.mark.asyncio
 async def test_memory_engine_decay_and_cleanup(tmp_path: Path):
     db_path = tmp_path / "memory_decay.db"
     engine = MemoryEngine(
