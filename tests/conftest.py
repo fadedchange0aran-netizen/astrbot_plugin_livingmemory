@@ -15,9 +15,17 @@ from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-PLUGINS_DIR = Path(__file__).resolve().parents[2]
-ASTRBOT_ROOT = Path(__file__).resolve().parents[4]
+
+def _safe_parent(path: Path, depth: int) -> Path:
+    parents = path.resolve().parents
+    if depth < len(parents):
+        return parents[depth]
+    return parents[-1]
+
+
+PROJECT_ROOT = _safe_parent(Path(__file__), 1)
+PLUGINS_DIR = _safe_parent(Path(__file__), 2)
+ASTRBOT_ROOT = _safe_parent(Path(__file__), 4)
 
 for candidate in (PROJECT_ROOT, PLUGINS_DIR, ASTRBOT_ROOT):
     candidate_str = str(candidate)
