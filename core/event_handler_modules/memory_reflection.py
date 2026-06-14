@@ -279,6 +279,7 @@ class MemoryReflection:
                     try:
                         task = asyncio.create_task(
                             self._storage_task(
+                                event,
                                 session_id,
                                 history_messages,
                                 persona_id,
@@ -303,6 +304,7 @@ class MemoryReflection:
 
     async def _storage_task(
         self,
+        event: AstrMessageEvent,
         session_id: str,
         history_messages: list[dict],
         persona_id: str,

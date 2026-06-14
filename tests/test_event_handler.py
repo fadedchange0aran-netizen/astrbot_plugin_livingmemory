@@ -180,6 +180,27 @@ async def test_handle_memory_reflection_triggers_storage_task(
 
 
 @pytest.mark.asyncio
+async def test_handle_memory_reflection_background_storage_uses_event_owner_id(
+    handler, memory_engine
+):
+    event = _make_event(group=False)
+    event.get_sender_id = Mock(return_value="owner-42")
+    resp = _make_resp("assistant answer")
+
+    with patch(
+        "astrbot_plugin_livingmemory.core.event_handler_modules.memory_reflection.get_persona_id",
+        new_callable=AsyncMock,
+    ) as get_persona:
+        get_persona.return_value = "persona_1"
+        await handler.handle_memory_reflection(event, resp)
+        await handler.shutdown()
+
+    assert memory_engine.add_memory.await_count >= 1
+    add_call = memory_engine.add_memory.await_args
+    assert add_call.kwargs["owner_id"] == "owner-42"
+
+
+@pytest.mark.asyncio
 async def test_handle_memory_reflection_skips_group_core_storage_by_default(
     handler, conversation_manager, memory_engine
 ):

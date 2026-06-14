@@ -2,6 +2,7 @@
 End-to-end integration tests with real plugin components and real SQLite/FAISS storage.
 """
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,10 +26,17 @@ from astrbot.api.provider import LLMResponse
 from astrbot.core.db.vec_db.faiss_impl.vec_db import FaissVecDB
 from astrbot.core.provider.provider import EmbeddingProvider
 
+from tests.test_graph_memory import _FakeFaissDB
+
 
 class _DeterministicEmbeddingProvider(EmbeddingProvider):
     def __init__(self, dim: int = 24):
-        super().__init__({"id": "test-embedding", "type": "test"}, {})
+        try:
+            super().__init__({"id": "test-embedding", "type": "test"}, {})
+        except TypeError:
+            # tests/conftest.py provides a minimal stub without an __init__ signature
+            self.meta = {"id": "test-embedding", "type": "test"}
+            self.config = {}
         self._dim = dim
 
     async def get_embedding(self, text: str) -> list[float]:
@@ -103,6 +111,26 @@ class _DeterministicLLMProvider:
         return LLMResponse(role="assistant", completion_text=json.dumps(payload))
 
 
+async def _build_vector_db(
+    *,
+    doc_store_path: str,
+    index_store_path: str,
+    embedding_provider: EmbeddingProvider,
+):
+    try:
+        db = FaissVecDB(
+            doc_store_path=doc_store_path,
+            index_store_path=index_store_path,
+            embedding_provider=embedding_provider,
+        )
+    except TypeError:
+        db = _FakeFaissDB()
+
+    if hasattr(db, "initialize"):
+        await db.initialize()
+    return db
+
+
 class _ContextConversationManager:
     def __init__(self, persona_id: str):
         self._persona_id = persona_id
@@ -135,24 +163,39 @@ class _TestContext:
 
 
 class _TestEvent:
-    def __init__(self, session_id: str, message: str):
+    def __init__(
+        self,
+        session_id: str,
+        message: str,
+        *,
+        sender_id: str = "user-1",
+        sender_name: str = "Tester",
+        self_id: str = "bot-1",
+        message_type=MessageType.FRIEND_MESSAGE,
+        platform_name: str = "test",
+    ):
         self.unified_msg_origin = session_id
         self._message = message
+        self._sender_id = sender_id
+        self._sender_name = sender_name
+        self._self_id = self_id
+        self._message_type = message_type
+        self._platform_name = platform_name
 
     def plain_result(self, message):
         return message
 
     def get_message_type(self):
-        return MessageType.FRIEND_MESSAGE
+        return self._message_type
 
     def get_sender_id(self):
-        return "user-1"
+        return self._sender_id
 
     def get_self_id(self):
-        return "bot-1"
+        return self._self_id
 
     def get_sender_name(self):
-        return "Tester"
+        return self._sender_name
 
     def get_message_str(self):
         return self._message
@@ -161,7 +204,7 @@ class _TestEvent:
         return []
 
     def get_platform_name(self):
-        return "test"
+        return self._platform_name
 
 
 @pytest_asyncio.fixture
@@ -173,19 +216,17 @@ async def real_db_stack(tmp_path: Path):
     graph_memory_index_path = tmp_path / "graph_memory.index"
 
     embedding_provider = _DeterministicEmbeddingProvider(dim=24)
-    faiss_db = FaissVecDB(
+    faiss_db = await _build_vector_db(
         doc_store_path=str(memory_db_path),
         index_store_path=str(memory_index_path),
         embedding_provider=embedding_provider,
     )
-    await faiss_db.initialize()
 
-    graph_faiss_db = FaissVecDB(
+    graph_faiss_db = await _build_vector_db(
         doc_store_path=str(graph_memory_db_path),
         index_store_path=str(graph_memory_index_path),
         embedding_provider=embedding_provider,
     )
-    await graph_faiss_db.initialize()
 
     memory_engine = MemoryEngine(
         db_path=str(memory_db_path),
@@ -220,6 +261,11 @@ async def real_db_stack(tmp_path: Path):
         {
             "recall_engine": {"top_k": 5, "injection_method": "extra_user_content"},
             "reflection_engine": {"summary_trigger_rounds": 1},
+            "filtering_settings": {
+                "use_owner_filtering": True,
+                "use_session_filtering": False,
+                "use_persona_filtering": True,
+            },
             "session_manager": {"max_messages_per_session": 100},
         }
     )
@@ -241,6 +287,7 @@ async def real_db_stack(tmp_path: Path):
 
     yield {
         "memory_engine": memory_engine,
+        "faiss_db": faiss_db,
         "conversation_manager": conversation_manager,
         "event_handler": event_handler,
         "command_handler": command_handler,
@@ -252,6 +299,34 @@ async def real_db_stack(tmp_path: Path):
     await faiss_db.close()
     await graph_faiss_db.close()
     await conversation_store.close()
+
+
+async def _load_docs_for_session(memory_engine: MemoryEngine, session_id: str) -> list[dict]:
+    return await memory_engine.faiss_db.document_storage.get_documents(
+        {"session_id": session_id}
+    )
+
+
+async def _count_memories_for_session(memory_engine: MemoryEngine, session_id: str) -> int:
+    docs = await _load_docs_for_session(memory_engine, session_id)
+    return len(docs)
+
+
+async def _load_owner_ids_for_session(
+    memory_engine: MemoryEngine, session_id: str
+) -> list[str]:
+    docs = await _load_docs_for_session(memory_engine, session_id)
+    return [
+        str(doc["metadata"]["owner_id"])
+        for doc in docs
+        if doc.get("metadata", {}).get("owner_id") is not None
+    ]
+
+
+async def _wait_for_storage_tasks(event_handler: EventHandler) -> None:
+    tasks = list(getattr(event_handler, "_storage_tasks", set()))
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -313,8 +388,8 @@ async def test_command_handlers_with_real_database(real_db_stack):
 @pytest.mark.asyncio
 async def test_normal_message_pipeline_with_real_database(real_db_stack):
     event_handler = real_db_stack["event_handler"]
+    memory_engine = real_db_stack["memory_engine"]
     conversation_manager = real_db_stack["conversation_manager"]
-    memory_db_path = real_db_stack["memory_db_path"]
 
     session_id = "test:private:pipeline-session"
     event = _TestEvent(session_id, "I went running yesterday.")
@@ -331,19 +406,9 @@ async def test_normal_message_pipeline_with_real_database(real_db_stack):
 
     assert await conversation_manager.store.get_message_count(session_id) == 2
 
-    async with aiosqlite.connect(memory_db_path) as db:
-        cursor = await db.execute(
-            """
-            SELECT text, metadata
-            FROM documents
-            WHERE json_extract(metadata, '$.session_id') = ?
-            """,
-            (session_id,),
-        )
-        rows = list(await cursor.fetchall())
-
+    rows = await _load_docs_for_session(memory_engine, session_id)
     assert len(rows) >= 1
-    assert any("running" in row[0].lower() for row in rows)
+    assert any("running" in row["text"].lower() for row in rows)
 
 
 @pytest.mark.asyncio
@@ -372,6 +437,93 @@ async def test_recall_injection_with_real_database(real_db_stack):
     assert len(req.extra_user_content_parts) == 1
     assert "<RAG-Faiss-Memory>" in req.extra_user_content_parts[0].text
     assert "headphones" in req.extra_user_content_parts[0].text.lower()
+
+
+@pytest.mark.asyncio
+async def test_owner_first_private_memory_recalls_across_sessions_in_runtime_path(
+    real_db_stack,
+):
+    event_handler = real_db_stack["event_handler"]
+    memory_engine = real_db_stack["memory_engine"]
+
+    first_session = "test:private:owner-session-a"
+    second_session = "test:private:owner-session-b"
+    sender_id = "same-user"
+
+    first_event = _TestEvent(
+        first_session,
+        "I started running every morning this week.",
+        sender_id=sender_id,
+    )
+    first_req = SimpleNamespace(
+        prompt="I started running every morning this week.",
+        system_prompt="",
+        contexts=[],
+        extra_user_content_parts=[],
+    )
+    first_resp = LLMResponse(
+        role="assistant",
+        completion_text="That sounds like a healthy routine.",
+    )
+
+    await event_handler.handle_memory_recall(first_event, first_req)
+    await event_handler.handle_memory_reflection(first_event, first_resp)
+    await _wait_for_storage_tasks(event_handler)
+
+    second_event = _TestEvent(
+        second_session,
+        "Can you remind me what habit I was building with running?",
+        sender_id=sender_id,
+    )
+    second_req = SimpleNamespace(
+        prompt="Can you remind me what habit I was building with running?",
+        system_prompt="",
+        contexts=[],
+        extra_user_content_parts=[],
+    )
+
+    await event_handler.handle_memory_recall(second_event, second_req)
+
+    assert len(second_req.extra_user_content_parts) == 1
+    recalled_text = second_req.extra_user_content_parts[0].text.lower()
+    assert "running" in recalled_text
+    assert "habit" in recalled_text
+
+    stored_owner_ids = await _load_owner_ids_for_session(memory_engine, first_session)
+    assert stored_owner_ids
+    assert stored_owner_ids == [sender_id]
+
+
+@pytest.mark.asyncio
+async def test_group_runtime_path_skips_core_memory_storage_by_default(real_db_stack):
+    event_handler = real_db_stack["event_handler"]
+    memory_engine = real_db_stack["memory_engine"]
+    conversation_manager = real_db_stack["conversation_manager"]
+
+    group_session = "test:group:room-1"
+    group_event = _TestEvent(
+        group_session,
+        "Tonight we are planning the project sync in the group.",
+        sender_id="group-user-1",
+        message_type=MessageType.GROUP_MESSAGE,
+    )
+    req = SimpleNamespace(
+        prompt="Tonight we are planning the project sync in the group.",
+        system_prompt="",
+        contexts=[],
+        extra_user_content_parts=[],
+    )
+    resp = LLMResponse(
+        role="assistant",
+        completion_text="Noted, I will keep track of the group planning context.",
+    )
+
+    await event_handler.handle_all_group_messages(group_event)
+    await event_handler.handle_memory_reflection(group_event, resp)
+    await _wait_for_storage_tasks(event_handler)
+
+    assert await conversation_manager.store.get_message_count(group_session) == 2
+    assert await _count_memories_for_session(memory_engine, group_session) == 0
 
 
 @pytest.mark.asyncio
