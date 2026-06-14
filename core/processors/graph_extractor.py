@@ -31,7 +31,7 @@ class GraphExtractor:
         and edges with per-atom confidence scores instead of hardcoded values.
         """
         if atoms:
-            return self._extract_from_atoms(source_memory_id, atoms)
+            return self._extract_from_atoms(source_memory_id, atoms, metadata)
         return self._extract_legacy(source_memory_id, content, metadata)
 
     def _extract_legacy(
@@ -44,6 +44,7 @@ class GraphExtractor:
         metadata = metadata or {}
         graph = ExtractedGraph()
 
+        owner_id = metadata.get("owner_id")
         session_id = metadata.get("session_id")
         persona_id = metadata.get("persona_id")
         summary = metadata.get("canonical_summary") or content
@@ -106,6 +107,7 @@ class GraphExtractor:
             entry_key = hashlib.sha1(payload.encode("utf-8")).hexdigest()
             entry_metadata = {
                 "source_memory_id": source_memory_id,
+                "owner_id": owner_id,
                 "session_id": session_id,
                 "persona_id": persona_id,
                 "importance": metadata.get("importance", 0.5),
@@ -247,8 +249,10 @@ class GraphExtractor:
         self,
         source_memory_id: int,
         atoms: list,
+        metadata: dict[str, Any] | None = None,
     ) -> ExtractedGraph:
         """Build graph from individual memory atoms with per-atom confidence."""
+        metadata = metadata or {}
         graph = ExtractedGraph()
         node_map: dict[str, GraphNode] = {}
 
@@ -271,6 +275,14 @@ class GraphExtractor:
             atom_confidence = float(getattr(atom, "confidence", 0.7))
             session_id = getattr(atom, "session_id", None)
             persona_id = getattr(atom, "persona_id", None)
+            atom_metadata = getattr(atom, "metadata", {}) or {}
+            owner_id = (
+                atom_metadata.get("owner_id")
+                if isinstance(atom_metadata, dict)
+                else None
+            )
+            if owner_id is None:
+                owner_id = metadata.get("owner_id")
             entities = getattr(atom, "entities", []) or []
 
             # Create entity nodes from atom.entities
@@ -292,6 +304,7 @@ class GraphExtractor:
             entry_key = hashlib.sha1(payload.encode("utf-8")).hexdigest()
             entry_metadata = {
                 "source_memory_id": source_memory_id,
+                "owner_id": owner_id,
                 "session_id": session_id,
                 "persona_id": persona_id,
                 "importance": float(getattr(atom, "importance", 0.5)),
@@ -366,6 +379,7 @@ class GraphExtractor:
                             entry_type="summary",
                             content=f"Atom: {atom.content}",
                             metadata={
+                                "owner_id": owner_id,
                                 "graph_confidence": float(
                                     getattr(atom, "confidence", 0.6)
                                 )

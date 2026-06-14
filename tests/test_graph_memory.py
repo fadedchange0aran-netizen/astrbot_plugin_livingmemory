@@ -13,6 +13,7 @@ from astrbot_plugin_livingmemory.core.models.graph_models import (
     GraphEntry,
     GraphNode,
 )
+from astrbot_plugin_livingmemory.core.models.memory_atom import AtomType, MemoryAtom
 from astrbot_plugin_livingmemory.core.processors.graph_extractor import GraphExtractor
 from astrbot_plugin_livingmemory.core.processors.text_processor import TextProcessor
 from astrbot_plugin_livingmemory.core.retrieval.graph_keyword_retriever import (
@@ -128,6 +129,7 @@ async def test_graph_memory_manager_indexes_nodes_edges_and_entries(tmp_path: Pa
     )
 
     metadata = {
+        "owner_id": "bia",
         "session_id": "test:private:s1",
         "persona_id": "persona_1",
         "importance": 0.8,
@@ -145,6 +147,10 @@ async def test_graph_memory_manager_indexes_nodes_edges_and_entries(tmp_path: Pa
     assert stats["graph_nodes"] >= 4
     assert stats["graph_edges"] >= 3
     assert stats["graph_entries"] >= 4
+
+    subgraph = await graph_store.get_subgraph_for_memories([1])
+    assert subgraph["entries"]
+    assert all(entry["metadata"].get("owner_id") == "bia" for entry in subgraph["entries"])
 
 
 @pytest.mark.asyncio
@@ -190,6 +196,48 @@ async def test_graph_memory_manager_rejects_entry_id_mismatch(tmp_path: Path):
                 "key_facts": ["明天下午三点开会"],
             },
         )
+
+
+@pytest.mark.asyncio
+async def test_graph_memory_manager_indexes_owner_id_into_atom_entries(tmp_path: Path):
+    db_path = tmp_path / "graph_memory_atoms.db"
+    graph_store = GraphStore(str(db_path))
+    await graph_store.initialize()
+
+    graph_manager = GraphMemoryManager(
+        graph_store=graph_store,
+        graph_vector_retriever=GraphVectorRetriever(_FakeFaissDB()),
+        graph_extractor=GraphExtractor(),
+    )
+
+    atoms = [
+        MemoryAtom(
+            parent_memory_id=0,
+            atom_type=AtomType.RELATIONAL,
+            content="Alice 负责发布窗口",
+            entities=["Alice", "发布窗口"],
+            importance=0.9,
+            confidence=0.85,
+            session_id="test:private:s1",
+            persona_id="persona_1",
+        )
+    ]
+
+    await graph_manager.index_memory(
+        9,
+        "Alice 负责发布窗口",
+        {
+            "owner_id": "bia",
+            "session_id": "test:private:s1",
+            "persona_id": "persona_1",
+            "canonical_summary": "Alice 负责发布窗口",
+        },
+        atoms=atoms,
+    )
+
+    subgraph = await graph_store.get_subgraph_for_memories([9])
+    assert subgraph["entries"]
+    assert all(entry["metadata"].get("owner_id") == "bia" for entry in subgraph["entries"])
 
 
 @pytest.mark.asyncio
