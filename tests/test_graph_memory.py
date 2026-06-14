@@ -425,6 +425,85 @@ async def test_memory_engine_dual_route_promotes_graph_hits(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_memory_engine_dual_route_owner_filtering_recalls_graph_hits_across_sessions(
+    tmp_path: Path,
+):
+    doc_db_path = tmp_path / "memory_owner_graph.db"
+    engine = MemoryEngine(
+        db_path=str(doc_db_path),
+        faiss_db=_FakeFaissDB(),
+        graph_vector_db=_FakeFaissDB(),
+        config={
+            "fallback_enabled": True,
+            "graph_memory_enabled": True,
+            "document_route_weight": 0.6,
+            "graph_route_weight": 0.4,
+        },
+    )
+    await engine.initialize()
+
+    owner_first = await engine.add_memory(
+        content="项目回顾记录一",
+        session_id="test:private:s1",
+        persona_id="persona_1",
+        importance=0.8,
+        metadata={
+            "topics": ["项目回顾"],
+            "participants": ["Alice"],
+            "key_facts": ["周五前完成发布检查"],
+            "canonical_summary": "项目回顾记录一",
+        },
+        owner_id="bia",
+    )
+    owner_second = await engine.add_memory(
+        content="项目回顾记录二",
+        session_id="test:private:s2",
+        persona_id="persona_1",
+        importance=0.7,
+        metadata={
+            "topics": ["项目回顾"],
+            "participants": ["Alice"],
+            "key_facts": ["下周继续跟进发布窗口"],
+            "canonical_summary": "项目回顾记录二",
+        },
+        owner_id="bia",
+    )
+    other_owner = await engine.add_memory(
+        content="其他人的项目记录",
+        session_id="test:private:s3",
+        persona_id="persona_1",
+        importance=0.6,
+        metadata={
+            "topics": ["项目回顾"],
+            "participants": ["Alice"],
+            "key_facts": ["和当前 owner 无关的记录"],
+            "canonical_summary": "其他人的项目记录",
+        },
+        owner_id="other",
+    )
+
+    results = await engine.search_memories(
+        query="Alice",
+        k=10,
+        session_id=None,
+        persona_id="persona_1",
+        owner_id="bia",
+    )
+
+    result_ids = {item.doc_id for item in results}
+    assert owner_first in result_ids
+    assert owner_second in result_ids
+    assert other_owner not in result_ids
+    assert results
+    assert max(
+        (item.score_breakdown or {}).get("graph_keyword_score", 0.0)
+        for item in results
+    ) > 0
+
+    await engine.close()
+
+
+@pytest.mark.asyncio
 async def test_memory_engine_rebuild_graph_index(tmp_path: Path):
     doc_db_path = tmp_path / "memory_rebuild.db"
     engine = MemoryEngine(
