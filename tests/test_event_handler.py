@@ -131,6 +131,9 @@ async def test_handle_memory_recall_injects_extra_user_content(handler, memory_e
         await handler.handle_memory_recall(event, req)
 
     memory_engine.search_memories.assert_awaited_once()
+    call_kwargs = memory_engine.search_memories.await_args.kwargs
+    assert call_kwargs["owner_id"] == "user-1"
+    assert call_kwargs["session_id"] is None
     assert len(req.extra_user_content_parts) == 1
     text_part = req.extra_user_content_parts[0]
     assert "<RAG-Faiss-Memory>" in text_part.text
@@ -743,7 +746,7 @@ async def test_handle_memory_recall_injection_fake_tool_call(handler, memory_eng
     assert tool_msg["role"] == "tool"
     assert tool_msg["tool_call_id"] == assistant_msg["tool_calls"][0]["id"]
     assert tool_msg["name"] == "recall_long_term_memory"
-    assert '"session_filtered": true' in tool_msg["content"]
+    assert '"session_filtered": false' in tool_msg["content"]
     assert '"persona_filtered": true' in tool_msg["content"]
     assert '"id": 99' in tool_msg["content"]
     assert "用户喜欢吃火锅" in tool_msg["content"]

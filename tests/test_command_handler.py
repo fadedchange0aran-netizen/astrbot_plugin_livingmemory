@@ -116,8 +116,11 @@ async def test_handle_search_validates_inputs_and_calls_engine(handler, mock_eve
 
     _ = [msg async for msg in handler.handle_search(mock_event, "hello", 200)]
     # k should be clamped to 100.
-    handler.memory_engine.search_memories.assert_awaited_with(
-        query="hello", k=100, session_id=mock_event.unified_msg_origin
+    handler.memory_engine.search_memories.assert_awaited_once_with(
+        query="hello",
+        k=100,
+        owner_id="user-1",
+        session_id=None,
     )
 
 

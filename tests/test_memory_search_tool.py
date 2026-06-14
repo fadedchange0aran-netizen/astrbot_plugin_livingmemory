@@ -116,6 +116,33 @@ async def test_memory_search_tool_disables_filters_when_config_disabled(
 
 
 @pytest.mark.asyncio
+async def test_memory_search_tool_defaults_session_filtering_to_disabled_when_missing(
+    memory_engine, astr_context
+):
+    tool = MemorySearchTool(
+        context=astr_context,
+        config_manager=ConfigManager({"recall_engine": {"top_k": 3, "max_k": 8}}),
+        memory_engine=memory_engine,
+    )
+
+    with patch(
+        "astrbot_plugin_livingmemory.core.tools.memory_search_tool.get_persona_id",
+        new_callable=AsyncMock,
+    ) as get_persona:
+        with _patch_owner_id():
+            get_persona.return_value = "persona_a"
+            await tool.call(_make_run_context(), query="默认过滤")
+
+    memory_engine.search_memories.assert_awaited_once_with(
+        query="默认过滤",
+        k=3,
+        owner_id="bia",
+        session_id=None,
+        persona_id="persona_a",
+    )
+
+
+@pytest.mark.asyncio
 async def test_memory_search_tool_serializes_results(memory_engine, astr_context):
     tool = MemorySearchTool(
         context=astr_context,
@@ -288,7 +315,7 @@ async def test_memory_search_tool_falls_back_to_default_k_for_invalid_input(
         query="test query",
         k=3,
         owner_id="bia",
-        session_id="test:private:session-1",
+        session_id=None,
         persona_id="persona_a",
     )
 

@@ -147,7 +147,7 @@ class CommandHandler:
             filtering_config = self.config_manager.filtering_settings
             owner_id = get_owner_id(self.config_manager, event)
             use_owner_filtering = filtering_config.get("use_owner_filtering", True)
-            use_session_filtering = filtering_config.get("use_session_filtering", True)
+            use_session_filtering = filtering_config.get("use_session_filtering", False)
             results = await self.memory_engine.search_memories(
                 query=query.strip(),
                 k=k,

@@ -141,7 +141,7 @@ class MemoryRecall:
                 )
                 use_owner_filtering = filtering_config.get("use_owner_filtering", True)
                 use_session_filtering = filtering_config.get(
-                    "use_session_filtering", True
+                    "use_session_filtering", False
                 )
 
                 # 获取 persona_id，与 AstrBot 主流程保持一致的三级优先级：

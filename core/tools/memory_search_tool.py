@@ -95,7 +95,7 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
             filtering_config = self.config_manager.filtering_settings
             use_owner_filtering = filtering_config.get("use_owner_filtering", True)
             use_persona_filtering = filtering_config.get("use_persona_filtering", True)
-            use_session_filtering = filtering_config.get("use_session_filtering", True)
+            use_session_filtering = filtering_config.get("use_session_filtering", False)
 
             session_id = event.unified_msg_origin
             owner_id = get_owner_id(self.config_manager, event)
