@@ -29,6 +29,7 @@ import {
       pageSize: 20,
       hasMore: false,
       keyword: "",
+      owner: "",
       session: "",
       status: "all",
       type: "all",

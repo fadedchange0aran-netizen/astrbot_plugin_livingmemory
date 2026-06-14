@@ -75,6 +75,7 @@
           <header class="page-header">
             <span class="page-title" data-i18n="nav.graph">Knowledge Graph</span>
             <div class="page-actions">
+              <input type="text" id="graph-owner-filter" class="input input-sm" data-i18n-placeholder="graph.ownerPh" placeholder="Owner ID" style="width:180px" />
               <input type="text" id="graph-session-filter" class="input input-sm" data-i18n-placeholder="graph.sessionPh" placeholder="Session ID" style="width:180px" />
               <button class="btn btn-secondary btn-sm" id="graph-overview-btn">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
@@ -117,6 +118,7 @@
           <div class="page-body">
             <div class="filter-bar">
               <input type="text" id="mem-keyword" class="input" data-i18n-placeholder="filter.keyword" placeholder="Search by keyword or memory ID..." />
+              <input type="text" id="mem-owner" class="input" data-i18n-placeholder="filter.ownerId" placeholder="Owner ID" style="max-width:200px" />
               <input type="text" id="mem-session" class="input" data-i18n-placeholder="filter.sessionId" placeholder="Session ID" style="max-width:200px" />
               <select id="mem-status" class="select input">
                 <option value="all" data-i18n="filter.statusAll">All Status</option>
@@ -194,6 +196,10 @@
                     <input type="range" id="recall-k" min="1" max="50" value="5" />
                     <span class="slider-value" id="recall-k-value">5</span>
                   </div>
+                </div>
+                <div class="recall-form-field" style="max-width:280px">
+                  <label class="recall-form-label" data-i18n="recall.ownerLabel">Owner ID (optional)</label>
+                  <input type="text" id="recall-owner" class="input input-sm" data-i18n-placeholder="recall.ownerPh" placeholder="Filter by owner..." />
                 </div>
                 <div class="recall-form-field" style="max-width:280px">
                   <label class="recall-form-label" data-i18n="recall.sessionLabel">Session ID (optional)</label>

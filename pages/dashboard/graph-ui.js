@@ -86,6 +86,7 @@
   function init() {
     initLabels();
     dom.queryInput = document.getElementById("graph-query-input");
+    dom.ownerInput = document.getElementById("graph-owner-filter");
     dom.sessionInput = document.getElementById("graph-session-filter");
     dom.memoryInput = document.getElementById("graph-memory-id");
     dom.searchButton = document.getElementById("graph-search-btn");
@@ -156,6 +157,7 @@
      ================================================================ */
   function getFilters() {
     return {
+      owner_id: dom.ownerInput ? dom.ownerInput.value.trim() || null : null,
       session_id: dom.sessionInput ? dom.sessionInput.value.trim() || null : null,
     };
   }
@@ -172,6 +174,7 @@
     try {
       var filters = getFilters();
       var params = new URLSearchParams();
+      if (filters.owner_id) params.set("owner_id", filters.owner_id);
       if (filters.session_id) params.set("session_id", filters.session_id);
       var qs = params.toString();
       var payload = await requestGraph("/graph/overview" + (qs ? "?" + qs : ""));
@@ -192,7 +195,8 @@
     setLoading(true);
     try {
       var filters = getFilters();
-      var body = addOptionalFilter({ query: query }, "session_id", filters.session_id);
+      var body = addOptionalFilter({ query: query }, "owner_id", filters.owner_id);
+      body = addOptionalFilter(body, "session_id", filters.session_id);
       var payload = await requestGraph("/graph/query", {
         method: "POST",
         body: body,
@@ -214,7 +218,8 @@
     setLoading(true);
     try {
       var filters = getFilters();
-      var body = addOptionalFilter({ memory_id: memoryId }, "session_id", filters.session_id);
+      var body = addOptionalFilter({ memory_id: memoryId }, "owner_id", filters.owner_id);
+      body = addOptionalFilter(body, "session_id", filters.session_id);
       var payload = await requestGraph("/graph/query", {
         method: "POST",
         body: body,

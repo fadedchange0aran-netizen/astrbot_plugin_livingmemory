@@ -49,6 +49,7 @@ export class RecallPage {
   async runRecall() {
     const query = document.getElementById("recall-query").value.trim();
     const k = parseInt(document.getElementById("recall-k").value) || 5;
+    const ownerId = document.getElementById("recall-owner").value.trim();
     const sessionId = document.getElementById("recall-session").value.trim();
 
     if (!query) {
@@ -63,6 +64,7 @@ export class RecallPage {
 
     try {
       const params = { query, k };
+      if (ownerId) params.owner_id = ownerId;
       if (sessionId) params.session_id = sessionId;
 
       const data = await this.api.post("recall/test", params);
@@ -141,8 +143,11 @@ export class RecallPage {
       html += '<div class="result-content recall-result-content">' + esc(content) + '</div>';
       html += '<div class="recall-result-meta text-secondary">';
       html += '<span>' + window.t("detail.importance") + ': ' + importance + '/10</span>';
+      if (mem.metadata?.owner_id) {
+        html += '<span>' + window.t("detail.ownerId") + ': ' + esc(String(mem.metadata.owner_id)) + '</span>';
+      }
       if (mem.metadata?.session_id) {
-        html += '<span>Session: ' + esc(String(mem.metadata.session_id)) + '</span>';
+        html += '<span>' + window.t("detail.sessionId") + ': ' + esc(String(mem.metadata.session_id)) + '</span>';
       }
       html += '</div>';
       html += '</div>';

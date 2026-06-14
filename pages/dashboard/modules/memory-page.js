@@ -25,6 +25,7 @@ export class MemoryPage {
       page_size: String(this.state.memory.pageSize)
     };
 
+    if (this.state.memory.owner) params.owner_id = this.state.memory.owner;
     if (this.state.memory.session) params.session_id = this.state.memory.session;
     if (this.state.memory.keyword) params.keyword = this.state.memory.keyword;
     if (this.state.memory.status && this.state.memory.status !== "all") {
@@ -189,6 +190,13 @@ export class MemoryPage {
     // 筛选：关键词
     document.getElementById("mem-keyword").addEventListener("input", debounce(() => {
       this.state.memory.keyword = document.getElementById("mem-keyword").value.trim();
+      this.state.memory.page = 1;
+      this.fetch();
+    }, 300));
+
+    // 筛选：归属者 ID
+    document.getElementById("mem-owner").addEventListener("input", debounce(() => {
+      this.state.memory.owner = document.getElementById("mem-owner").value.trim();
       this.state.memory.page = 1;
       this.fetch();
     }, 300));

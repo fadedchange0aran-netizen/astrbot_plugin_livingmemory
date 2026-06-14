@@ -84,6 +84,7 @@ export class PeekPanel {
         memory_type: memory.memory_type || rawMeta.memory_type || "GENERAL",
         importance: memory.importance != null ? Number(memory.importance) : 5,
         status: memory.status || rawMeta.status || "active",
+        owner_id: rawMeta.owner_id || "--",
         session_id: rawMeta.session_id || "--",
         persona_id: rawMeta.persona_id || "--",
         created_at: memory.created_at || "--",
@@ -119,6 +120,7 @@ export class PeekPanel {
     const content = getDetailText(detail);
     const created = detail.created_at || "--";
     const updated = detail.updated_at || "--";
+    const ownerId = detail.owner_id || (detail.metadata && detail.metadata.owner_id) || "--";
     const sessionId = detail.session_id || "--";
     const personaId = detail.persona_id || "--";
     const keyFacts = detail.key_facts || [];
@@ -160,6 +162,7 @@ export class PeekPanel {
     html += metaItem(window.t("detail.status"), statusPill(status));
     html += metaItem(window.t("detail.type"), '<span class="type-tag">' + esc(type) + '</span>');
     html += metaItem(window.t("detail.importance"), importance + ' / 10');
+    html += metaItem(window.t("detail.ownerId"), '<span style="font-size:11px;font-family:monospace">' + esc(String(ownerId)) + '</span>');
     html += metaItem(window.t("detail.sessionId"), '<span style="font-size:11px;font-family:monospace">' + esc(String(sessionId)) + '</span>');
     html += metaItem(window.t("detail.personaId"), '<span style="font-size:11px;font-family:monospace">' + esc(String(personaId)) + '</span>');
     html += metaItem(window.t("detail.created"), esc(created));
