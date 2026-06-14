@@ -732,6 +732,7 @@ class GraphStore:
         limit: int,
         session_id: str | None = None,
         persona_id: str | None = None,
+        owner_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Expand one hop from matched nodes to their linked entries."""
         if not node_ids:
@@ -747,6 +748,12 @@ class GraphStore:
         if persona_id is not None:
             filters.append("ge.persona_id = ?")
             params.append(persona_id)
+        if owner_id is not None:
+            filters.append(
+                "CASE WHEN json_valid(ge.metadata) "
+                "THEN json_extract(ge.metadata, '$.owner_id') END = ?"
+            )
+            params.append(owner_id)
         where_clause = f"AND {' AND '.join(filters)}" if filters else ""
 
         async with self._connect() as db:
@@ -827,6 +834,7 @@ class GraphStore:
         limit: int = 12,
         session_id: str | None = None,
         persona_id: str | None = None,
+        owner_id: str | None = None,
     ) -> list[int]:
         """Return recently updated memory identifiers represented in the graph."""
         limit = max(1, min(limit, 200))
@@ -839,6 +847,12 @@ class GraphStore:
         if persona_id is not None:
             filters.append("persona_id = ?")
             params.append(persona_id)
+        if owner_id is not None:
+            filters.append(
+                "CASE WHEN json_valid(metadata) "
+                "THEN json_extract(metadata, '$.owner_id') END = ?"
+            )
+            params.append(owner_id)
 
         where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
 
@@ -865,6 +879,9 @@ class GraphStore:
         limit_entries: int = 36,
         limit_nodes: int = 48,
         limit_edges: int = 72,
+        session_id: str | None = None,
+        persona_id: str | None = None,
+        owner_id: str | None = None,
     ) -> dict[str, Any]:
         """Return a compact graph snapshot for the provided memory identifiers."""
         normalized_memory_ids: list[int] = []
@@ -887,6 +904,21 @@ class GraphStore:
         limit_edges = max(1, min(limit_edges, 400))
 
         memory_placeholders = ",".join("?" * len(normalized_memory_ids))
+        filters: list[str] = [f"source_memory_id IN ({memory_placeholders})"]
+        params: list[Any] = list(normalized_memory_ids)
+        if session_id is not None:
+            filters.append("session_id = ?")
+            params.append(session_id)
+        if persona_id is not None:
+            filters.append("persona_id = ?")
+            params.append(persona_id)
+        if owner_id is not None:
+            filters.append(
+                "CASE WHEN json_valid(metadata) "
+                "THEN json_extract(metadata, '$.owner_id') END = ?"
+            )
+            params.append(owner_id)
+        where_clause = f"WHERE {' AND '.join(filters)}"
 
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
@@ -895,11 +927,11 @@ class GraphStore:
                 SELECT id, source_memory_id, session_id, persona_id,
                        entry_type, relation_type, content, metadata, edge_id
                 FROM graph_entries
-                WHERE source_memory_id IN ({memory_placeholders})
+                {where_clause}
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (*normalized_memory_ids, limit_entries),
+                (*params, limit_entries),
             )
             entry_rows = await entry_cursor.fetchall()
 
@@ -1169,6 +1201,7 @@ class GraphStore:
         self,
         session_id: str | None = None,
         persona_id: str | None = None,
+        owner_id: str | None = None,
         limit_memories: int = 12,
         limit_entries: int = 36,
         limit_nodes: int = 48,
@@ -1179,12 +1212,16 @@ class GraphStore:
             limit=limit_memories,
             session_id=session_id,
             persona_id=persona_id,
+            owner_id=owner_id,
         )
         return await self.get_subgraph_for_memories(
             memory_ids,
             limit_entries=limit_entries,
             limit_nodes=limit_nodes,
             limit_edges=limit_edges,
+            session_id=session_id,
+            persona_id=persona_id,
+            owner_id=owner_id,
         )
 
     async def get_memory_entry_stats(self) -> dict[str, int]:

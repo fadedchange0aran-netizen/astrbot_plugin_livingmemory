@@ -44,6 +44,7 @@ class GraphHandler:
         获取图谱概览
 
         查询参数:
+            - owner_id: 归属者过滤（可选）
             - session_id: 会话ID过滤（可选）
             - persona_id: 人格ID过滤（可选）
             - limit_memories: 记忆数量限制（默认12，最大24）
@@ -55,6 +56,7 @@ class GraphHandler:
             包含图谱快照和统计的字典
         """
         args = request.args
+        owner_id = self.utils.optional_text(args.get("owner_id"))
         session_id = self.utils.optional_text(args.get("session_id"))
         persona_id = self.utils.optional_text(args.get("persona_id"))
 
@@ -83,6 +85,7 @@ class GraphHandler:
                         enabled=False,
                         mode="overview",
                         filters={
+                            "owner_id": owner_id,
                             "session_id": session_id,
                             "persona_id": persona_id,
                         },
@@ -90,6 +93,7 @@ class GraphHandler:
                 )
 
             snapshot = await graph_store.get_graph_snapshot(
+                owner_id=owner_id,
                 session_id=session_id,
                 persona_id=persona_id,
                 limit_memories=limit_memories,
@@ -104,6 +108,7 @@ class GraphHandler:
                     enabled=True,
                     mode="overview",
                     filters={
+                        "owner_id": owner_id,
                         "session_id": session_id,
                         "persona_id": persona_id,
                     },
@@ -125,6 +130,7 @@ class GraphHandler:
         Payload:
             - query: 查询文本（可选）
             - memory_id: 记忆ID（可选）
+            - owner_id: 归属者过滤（可选）
             - session_id: 会话ID过滤（可选）
             - persona_id: 人格ID过滤（可选）
             - limit_memories: 记忆数量限制（默认10，最大24）
@@ -137,6 +143,7 @@ class GraphHandler:
         """
         payload = await request.get_json(silent=True) or {}
         query_text = str(payload.get("query", "")).strip()
+        owner_id = self.utils.optional_text(payload.get("owner_id"))
         session_id = self.utils.optional_text(payload.get("session_id"))
         persona_id = self.utils.optional_text(payload.get("persona_id"))
         memory_id_raw = payload.get("memory_id")
@@ -167,6 +174,7 @@ class GraphHandler:
                         mode="query",
                         query=query_text,
                         filters={
+                            "owner_id": owner_id,
                             "session_id": session_id,
                             "persona_id": persona_id,
                         },
@@ -185,6 +193,9 @@ class GraphHandler:
                     limit_entries=limit_entries,
                     limit_nodes=limit_nodes,
                     limit_edges=limit_edges,
+                    owner_id=owner_id,
+                    session_id=session_id,
+                    persona_id=persona_id,
                 )
                 return self.utils.ok(
                     self.utils.build_graph_view_payload(
@@ -194,6 +205,7 @@ class GraphHandler:
                         mode="memory_focus",
                         memory_id=memory_id,
                         filters={
+                            "owner_id": owner_id,
                             "session_id": session_id,
                             "persona_id": persona_id,
                         },
@@ -203,6 +215,7 @@ class GraphHandler:
             # 模式 2: 无查询，返回概览
             if not query_text:
                 snapshot = await graph_store.get_graph_snapshot(
+                    owner_id=owner_id,
                     session_id=session_id,
                     persona_id=persona_id,
                     limit_memories=limit_memories,
@@ -217,6 +230,7 @@ class GraphHandler:
                         enabled=True,
                         mode="overview",
                         filters={
+                            "owner_id": owner_id,
                             "session_id": session_id,
                             "persona_id": persona_id,
                         },
@@ -227,6 +241,7 @@ class GraphHandler:
             search_results = await memory_engine.search_memories(
                 query=query_text,
                 k=limit_memories,
+                owner_id=owner_id,
                 session_id=session_id,
                 persona_id=persona_id,
             )
@@ -285,6 +300,7 @@ class GraphHandler:
                 node_entry_hits = await graph_store.get_entries_for_node_ids(
                     matched_node_ids,
                     limit=max(8, min(limit_entries, 24)),
+                    owner_id=owner_id,
                     session_id=session_id,
                     persona_id=persona_id,
                 )
@@ -325,6 +341,9 @@ class GraphHandler:
                 limit_entries=limit_entries,
                 limit_nodes=limit_nodes,
                 limit_edges=limit_edges,
+                owner_id=owner_id,
+                session_id=session_id,
+                persona_id=persona_id,
             )
             return self.utils.ok(
                 self.utils.build_graph_view_payload(
@@ -337,6 +356,7 @@ class GraphHandler:
                     matched_node_ids=matched_node_ids,
                     matched_memory_ids=matched_memory_ids,
                     filters={
+                        "owner_id": owner_id,
                         "session_id": session_id,
                         "persona_id": persona_id,
                     },

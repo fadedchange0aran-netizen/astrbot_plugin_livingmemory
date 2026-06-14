@@ -39,7 +39,14 @@ class FakeMemoryEngine:
     async def get_statistics(self):
         return self.stats
 
-    async def search_memories(self, query, k=5, session_id=None, persona_id=None):
+    async def search_memories(
+        self,
+        query,
+        k=5,
+        session_id=None,
+        persona_id=None,
+        owner_id=None,
+    ):
         return []
 
     async def get_memory(self, memory_id: int):
@@ -596,6 +603,64 @@ class TestListMemories:
         assert [item["id"] for item in result["data"]["items"]] == [2, 1]
 
     @pytest.mark.asyncio
+    async def test_owner_filter_is_applied_in_sql(self, api, tmp_path):
+        db_path = tmp_path / "memories_owner.db"
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                """
+                CREATE TABLE documents (
+                    id INTEGER PRIMARY KEY,
+                    doc_id TEXT,
+                    text TEXT,
+                    metadata TEXT,
+                    created_at TEXT,
+                    updated_at TEXT
+                )
+                """
+            )
+            rows = [
+                (1, "1", "owner memory", {"owner_id": "bia", "create_time": 10}),
+                (2, "2", "other memory", {"owner_id": "other", "create_time": 20}),
+            ]
+            for memory_id, doc_id, text, metadata in rows:
+                await db.execute(
+                    """
+                    INSERT INTO documents
+                        (id, doc_id, text, metadata, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        memory_id,
+                        doc_id,
+                        text,
+                        json.dumps(metadata),
+                        "created",
+                        "updated",
+                    ),
+                )
+            await db.commit()
+
+        api.plugin.initializer.memory_engine.db_path = str(db_path)
+        req = _mock_page_request(
+            args={
+                "page": "1",
+                "page_size": "20",
+                "owner_id": "bia",
+                "session_id": "",
+                "keyword": "",
+                "status": "all",
+            }
+        )
+
+        with _patch_page_request(req):
+            result = await api.list_memories()
+
+        assert result["status"] == "ok"
+        assert result["data"]["total"] == 1
+        assert result["data"]["items"][0]["id"] == 1
+        assert result["data"]["filters"]["owner_id"] == "bia"
+
+    @pytest.mark.asyncio
     async def test_plugin_not_ready(self, api_not_ready):
         req = _mock_page_request()
         with _patch_page_request(req):
@@ -865,6 +930,22 @@ class TestTestRecall:
         assert item["score_breakdown"]["graph_vector_score"] == 0.4
         assert item["metadata"]["document_keyword_score"] == 0.1
 
+    @pytest.mark.asyncio
+    async def test_recall_passes_owner_filter(self, api):
+        api.plugin.initializer.memory_engine.search_memories = AsyncMock(return_value=[])
+        req = _mock_page_request(get_json={"query": "test", "k": 5, "owner_id": "bia"})
+        with _patch_page_request(req):
+            result = await api.test_recall()
+
+        assert result["status"] == "ok"
+        assert result["data"]["owner_id_filter"] == "bia"
+        assert (
+            api.plugin.initializer.memory_engine.search_memories.call_args.kwargs[
+                "owner_id"
+            ]
+            == "bia"
+        )
+
 
 class TestGraphEndpoints:
     @pytest.mark.asyncio
@@ -1015,13 +1096,45 @@ class TestGraphEndpoints:
         assert data["snapshot"]["nodes"][0]["highlighted"] is True
         assert data["retrieval"]["items"][0]["source"] == "graph_node"
         engine.search_memories.assert_awaited_once()
+        assert engine.search_memories.call_args.kwargs["owner_id"] is None
         assert engine.search_memories.call_args.kwargs["session_id"] is None
         graph_store.get_entries_for_node_ids.assert_awaited_once()
+        assert graph_store.get_entries_for_node_ids.call_args.kwargs["owner_id"] is None
         assert (
             graph_store.get_entries_for_node_ids.call_args.kwargs["session_id"] is None
         )
         graph_store.get_subgraph_for_memories.assert_awaited_once()
         assert graph_store.get_subgraph_for_memories.call_args.args[0] == [123]
+
+    @pytest.mark.asyncio
+    async def test_query_propagates_owner_filter_to_recall_and_graph_store(self):
+        snapshot = {"nodes": [], "edges": [], "entries": [], "memories": []}
+        graph_store = SimpleNamespace(
+            search_nodes_by_tokens=AsyncMock(return_value=[]),
+            get_entries_for_node_ids=AsyncMock(return_value=[]),
+            get_subgraph_for_memories=AsyncMock(return_value=snapshot),
+        )
+        engine = FakeMemoryEngine(graph_store=graph_store)
+        engine.search_memories = AsyncMock(return_value=[])
+        api = PluginPageApi(FakePlugin(memory_engine=engine))
+        req = _mock_page_request(
+            get_json={
+                "query": "alice",
+                "owner_id": "bia",
+                "session_id": "",
+                "persona_id": "",
+            }
+        )
+
+        with _patch_page_request(req):
+            result = await api.query_graph()
+
+        assert result["status"] == "ok"
+        assert result["data"]["filters"]["owner_id"] == "bia"
+        assert engine.search_memories.call_args.kwargs["owner_id"] == "bia"
+        assert (
+            graph_store.get_subgraph_for_memories.call_args.kwargs["owner_id"] == "bia"
+        )
 
 
 class TestListBackups:

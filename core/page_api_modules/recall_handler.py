@@ -33,6 +33,7 @@ class RecallHandler:
             - query: 查询文本（必需）
             - k: 返回结果数量（默认5，最大50）
             - session_id: 会话ID过滤（可选）
+            - owner_id: 归属者过滤（可选）
 
         Returns:
             包含召回结果和性能指标的字典
@@ -48,12 +49,14 @@ class RecallHandler:
             return self.utils.error("k 必须是整数")
 
         session_id = self.utils.optional_text(payload.get("session_id"))
+        owner_id = self.utils.optional_text(payload.get("owner_id"))
 
         try:
             start_time = time.time()
             results = await memory_engine.search_memories(
                 query=query_text,
                 k=k,
+                owner_id=owner_id,
                 session_id=session_id,
                 persona_id=None,
             )
@@ -72,6 +75,7 @@ class RecallHandler:
                 if isinstance(value, (int, float))
             }
             metadata = {
+                "owner_id": result.metadata.get("owner_id"),
                 "session_id": result.metadata.get("session_id"),
                 "persona_id": result.metadata.get("persona_id"),
                 "importance": result.metadata.get("importance", 0.5),
@@ -97,6 +101,7 @@ class RecallHandler:
                 "total": len(formatted_results),
                 "query": query_text,
                 "k": k,
+                "owner_id_filter": owner_id,
                 "session_id_filter": session_id,
                 "elapsed_time_ms": round(elapsed_time, 2),
             }

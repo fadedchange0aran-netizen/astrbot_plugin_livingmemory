@@ -31,6 +31,7 @@ class MemoryHandler:
         获取记忆列表（带分页和过滤）
 
         查询参数:
+            - owner_id: 归属者过滤
             - session_id: 会话ID过滤
             - keyword: 关键词搜索（支持ID或文本）
             - status: 状态过滤（all/active/archived）
@@ -43,6 +44,7 @@ class MemoryHandler:
             包含记忆列表和分页信息的字典
         """
         query = request.args
+        owner_id = self.utils.optional_text(query.get("owner_id"))
         session_id = self.utils.optional_text(query.get("session_id"))
         keyword = str(query.get("keyword", "")).strip()
         status_filter = str(query.get("status", "all")).strip().lower() or "all"
@@ -71,6 +73,13 @@ class MemoryHandler:
             "'GENERAL'"
             "))"
         )
+
+        if owner_id:
+            where_clauses.append(
+                "CASE WHEN json_valid(metadata) "
+                "THEN json_extract(metadata, '$.owner_id') END = ?"
+            )
+            params.append(owner_id)
 
         if session_id:
             where_clauses.append(
@@ -202,6 +211,7 @@ class MemoryHandler:
                 "page_size": page_size,
                 "has_more": (offset + page_size) < total,
                 "filters": {
+                    "owner_id": owner_id,
                     "session_id": session_id,
                     "keyword": keyword,
                     "status": status_filter,
