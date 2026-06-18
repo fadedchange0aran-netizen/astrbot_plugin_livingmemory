@@ -19,6 +19,7 @@ from ..utils import (
     format_memories_for_injection,
     get_owner_id,
     get_persona_id,
+    resolve_owner_context,
 )
 
 if TYPE_CHECKING:
@@ -58,6 +59,136 @@ class MemoryRecall:
         self.conversation_manager = conversation_manager
         self.message_utils = message_utils
         self.injection_adapter = injection_adapter
+
+    @staticmethod
+    def _normalize_identity_values(raw_values) -> set[str]:
+        if raw_values is None:
+            return set()
+        if isinstance(raw_values, str):
+            candidates = raw_values.replace("\n", ",").split(",")
+        elif isinstance(raw_values, (list, tuple, set)):
+            candidates = raw_values
+        else:
+            candidates = [raw_values]
+        return {str(item).strip() for item in candidates if str(item).strip()}
+
+    def _get_continuity_sender_ids(self, owner_context: dict[str, object]) -> set[str]:
+        canonical_owner_id = str(owner_context.get("canonical_owner_id") or "").strip()
+        sender_id = str(owner_context.get("sender_id") or "").strip()
+        is_trusted_owner_sender = bool(owner_context.get("is_trusted_owner_sender"))
+
+        if canonical_owner_id and is_trusted_owner_sender:
+            trusted_ids = self._normalize_identity_values(
+                self.config_manager.get("privacy_settings.trusted_sender_ids", [])
+            )
+            trusted_ids.add(canonical_owner_id)
+            return trusted_ids
+
+        if sender_id:
+            return {sender_id}
+        return set()
+
+    @staticmethod
+    def _truncate_text(text: str, max_chars: int) -> str:
+        normalized = " ".join(str(text or "").split())
+        if max_chars <= 0 or len(normalized) <= max_chars:
+            return normalized
+        if max_chars <= 1:
+            return normalized[:max_chars]
+        return normalized[: max_chars - 1].rstrip() + "…"
+
+    def _build_session_continuity_excerpt(self, messages: list, max_chars: int) -> str:
+        parts: list[str] = []
+        for message in messages:
+            content = self._truncate_text(getattr(message, "content", "") or "", max_chars)
+            if not content:
+                continue
+            role = getattr(message, "role", "")
+            role_label = "阿然" if role == "assistant" else "你" if role == "user" else "系统"
+            parts.append(f"{role_label}: {content}")
+        return " / ".join(parts)
+
+    async def _build_cross_platform_continuity_block(
+        self,
+        current_session_id: str,
+        owner_context: dict[str, object],
+    ) -> str:
+        if not self.config_manager.get(
+            "recall_engine.cross_platform_continuity_enabled", False
+        ):
+            return ""
+
+        continuity_sender_ids = self._get_continuity_sender_ids(owner_context)
+        if not continuity_sender_ids:
+            return ""
+
+        limit = max(
+            1,
+            int(
+                self.config_manager.get(
+                    "recall_engine.cross_platform_continuity_limit", 2
+                )
+            ),
+        )
+        max_chars = max(
+            20,
+            int(
+                self.config_manager.get(
+                    "recall_engine.cross_platform_continuity_max_chars", 120
+                )
+            ),
+        )
+        scan_limit = max(
+            limit,
+            int(
+                self.config_manager.get(
+                    "recall_engine.cross_platform_continuity_scan_limit", 8
+                )
+            ),
+        )
+
+        recent_sessions = await self.conversation_manager.get_recent_sessions(
+            limit=scan_limit
+        )
+        continuity_lines: list[str] = []
+
+        for session in recent_sessions:
+            session_id = str(getattr(session, "session_id", "") or "").strip()
+            if not session_id or session_id == current_session_id:
+                continue
+
+            participants = {
+                str(item).strip()
+                for item in getattr(session, "participants", []) or []
+                if str(item).strip()
+            }
+            if not participants:
+                continue
+            if participants and not participants.intersection(continuity_sender_ids):
+                continue
+
+            messages = await self.conversation_manager.get_messages(
+                session_id=session_id,
+                limit=2,
+                use_cache=False,
+            )
+            excerpt = self._build_session_continuity_excerpt(messages, max_chars)
+            if not excerpt:
+                continue
+
+            platform = str(getattr(session, "platform", "") or "").strip() or "unknown"
+            continuity_lines.append(f"- [{platform}] {excerpt}")
+            if len(continuity_lines) >= limit:
+                break
+
+        if not continuity_lines:
+            return ""
+
+        return (
+            "[跨窗连续性提示]\n"
+            "当前对话仍然是主轴；以下只是你在其他入口刚刚发生的少量近况，可用于保持连续性，不要盖过当前窗口。\n"
+            + "\n".join(continuity_lines)
+        )
 
     async def handle_memory_recall(
         self, event: AstrMessageEvent, req: ProviderRequest
@@ -151,7 +282,25 @@ class MemoryRecall:
                 # 注意：on_llm_request 钩子在 _ensure_persona_and_skills 之前触发，
                 # 因此不能直接依赖 req.system_prompt 已注入人格，需自行走完整优先级。
                 persona_id = await get_persona_id(self.context, event)
-                owner_id = get_owner_id(self.config_manager, event)
+                owner_context = resolve_owner_context(self.config_manager, event)
+                owner_id = get_owner_id(self.config_manager, event, purpose="recall")
+
+                if use_owner_filtering and owner_id is None:
+                    logger.info(
+                        f"[{session_id}] 当前上下文不允许读取 owner 私有记忆，"
+                        f"sender_id={owner_context.get('sender_id') or 'unknown'}"
+                    )
+                    return
+
+                continuity_block = await self._build_cross_platform_continuity_block(
+                    session_id,
+                    owner_context,
+                )
+                if continuity_block:
+                    req.extra_user_content_parts.append(
+                        TextPart(text=continuity_block).mark_as_temp()
+                    )
+                    logger.info(f"[{session_id}] 已注入跨窗连续性提示")
 
                 recall_owner_id = owner_id if use_owner_filtering else None
                 recall_session_id = session_id if use_session_filtering else None

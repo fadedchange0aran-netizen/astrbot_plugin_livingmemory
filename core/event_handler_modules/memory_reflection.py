@@ -415,7 +415,14 @@ class MemoryReflection:
 
                 # 正常流程：添加到记忆引擎
                 if self.memory_engine and should_store_to_core:
-                    owner_id = get_owner_id(self.config_manager, event)
+                    owner_id = get_owner_id(
+                        self.config_manager, event, purpose="storage"
+                    )
+                    if owner_id is None:
+                        logger.info(
+                            f"[{session_id}] 当前上下文不允许写入 owner 私有记忆，跳过核心长期记忆存储"
+                        )
+                        return
                     await self.memory_engine.add_memory(
                         content=content,
                         session_id=session_id,

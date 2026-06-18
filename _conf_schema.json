@@ -145,6 +145,30 @@
                 "hint": "限制内存中保留的检索结果数量。超过上限时自动淘汰最久未使用的结果。",
                 "type": "int",
                 "default": 256
+            },
+            "cross_platform_continuity_enabled": {
+                "description": "启用跨窗连续性提示",
+                "hint": "在当前会话请求前，附带最近其他入口的轻量上下文摘要，帮助模型在切换窗口时知道别处刚发生了什么。默认关闭，建议在 owner-first 场景下按需开启。",
+                "type": "bool",
+                "default": false
+            },
+            "cross_platform_continuity_limit": {
+                "description": "跨窗提示条数",
+                "hint": "每次最多附带多少条其他入口的最近动态。建议 1-3，过多会抢占当前对话注意力。",
+                "type": "int",
+                "default": 2
+            },
+            "cross_platform_continuity_max_chars": {
+                "description": "单条跨窗提示最大长度",
+                "hint": "每条其他入口动态截断到多少字符，避免提示词过长。建议 60-160。",
+                "type": "int",
+                "default": 120
+            },
+            "cross_platform_continuity_scan_limit": {
+                "description": "跨窗扫描会话上限",
+                "hint": "为生成跨窗提示，最多扫描多少个最近活跃会话。数值越大越容易命中备用入口，但也会增加少量查询开销。",
+                "type": "int",
+                "default": 8
             }
         }
     },
@@ -201,6 +225,36 @@
                 "hint": "留空时自动回退到当前发送者 ID；如果希望跨平台/跨会话共享同一套长期记忆，可手动指定固定 owner_id。",
                 "type": "string",
                 "default": ""
+            }
+        }
+    },
+    "privacy_settings": {
+        "description": "隐私与身份映射",
+        "type": "object",
+        "items": {
+            "canonical_owner_id": {
+                "description": "核心私有记忆 owner_id",
+                "hint": "用于当前私有记忆主人的规范 owner_id。建议与 owner_settings.owner_id 保持一致，例如 your_owner_id。",
+                "type": "string",
+                "default": ""
+            },
+            "trusted_sender_ids": {
+                "description": "受信 sender_id 列表",
+                "hint": "只有这些 sender_id 才会被视为 canonical owner 本人。建议填写各平台真实 sender_id，一行一个或逗号分隔。",
+                "type": "string",
+                "default": ""
+            },
+            "allow_group_owner_recall": {
+                "description": "群聊允许读取私有记忆",
+                "hint": "开启后，canonical owner 在群聊中也可召回自己的私有长期记忆。默认关闭，更安全。",
+                "type": "bool",
+                "default": false
+            },
+            "allow_group_owner_storage": {
+                "description": "群聊允许写入私有记忆",
+                "hint": "开启后，canonical owner 在群聊中的内容也可写入自己的私有长期记忆。默认关闭，更安全。",
+                "type": "bool",
+                "default": false
             }
         }
     },

@@ -145,9 +145,12 @@ class CommandHandler:
         try:
             session_id = event.unified_msg_origin
             filtering_config = self.config_manager.filtering_settings
-            owner_id = get_owner_id(self.config_manager, event)
+            owner_id = get_owner_id(self.config_manager, event, purpose="recall")
             use_owner_filtering = filtering_config.get("use_owner_filtering", True)
             use_session_filtering = filtering_config.get("use_session_filtering", False)
+            if use_owner_filtering and owner_id is None:
+                yield event.plain_result(t("search.no_results", query=query))
+                return
             results = await self.memory_engine.search_memories(
                 query=query.strip(),
                 k=k,
@@ -436,7 +439,10 @@ class CommandHandler:
                 "message_count": actual_count - last_summarized_index,
                 "triggered_by": "manual",
             }
-            owner_id = get_owner_id(self.config_manager, event)
+            owner_id = get_owner_id(self.config_manager, event, purpose="storage")
+            if owner_id is None:
+                yield event.plain_result("当前上下文不允许写入私有长期记忆。")
+                return
 
             await self.memory_engine.add_memory(
                 content=content,

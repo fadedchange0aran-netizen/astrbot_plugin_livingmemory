@@ -80,6 +80,18 @@ class RecallEngineConfig(BaseModel):
     search_cache_max_size: int = Field(
         default=256, ge=0, le=10000, description="检索缓存最大条目数"
     )
+    cross_platform_continuity_enabled: bool = Field(
+        default=False, description="是否启用跨窗连续性提示"
+    )
+    cross_platform_continuity_limit: int = Field(
+        default=2, ge=1, le=10, description="跨窗提示条数"
+    )
+    cross_platform_continuity_max_chars: int = Field(
+        default=120, ge=20, le=1000, description="单条跨窗提示最大长度"
+    )
+    cross_platform_continuity_scan_limit: int = Field(
+        default=8, ge=1, le=50, description="跨窗扫描会话上限"
+    )
 
 
 class FusionStrategyConfig(BaseModel):
@@ -138,6 +150,41 @@ class OwnerConfig(BaseModel):
     owner_id: str = Field(
         default="",
         description="长期记忆归属键。留空时回退到当前发送者 ID。",
+    )
+
+
+class PrivacyConfig(BaseModel):
+    """隐私与身份映射配置"""
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_sender_ids(cls, data):
+        if not isinstance(data, dict):
+            return data
+        value = data.get("trusted_sender_ids")
+        if isinstance(value, str):
+            items = value.replace("\r", "\n").replace(",", "\n").split("\n")
+            data = dict(data)
+            data["trusted_sender_ids"] = [
+                item.strip() for item in items if item.strip()
+            ]
+        return data
+
+    canonical_owner_id: str = Field(
+        default="",
+        description="核心私有记忆的规范 owner_id。留空则不启用身份映射门控。",
+    )
+    trusted_sender_ids: list[str] = Field(
+        default_factory=list,
+        description="被视为 canonical owner 本人的 sender_id 列表。",
+    )
+    allow_group_owner_recall: bool = Field(
+        default=False,
+        description="是否允许在群聊中读取 canonical owner 的私有长期记忆。",
+    )
+    allow_group_owner_storage: bool = Field(
+        default=False,
+        description="是否允许在群聊中把内容写入 canonical owner 的私有长期记忆。",
     )
 
 
@@ -269,6 +316,7 @@ class LivingMemoryConfig(BaseModel):
         default_factory=ForgettingAgentConfig
     )
     owner_settings: OwnerConfig = Field(default_factory=OwnerConfig)
+    privacy_settings: PrivacyConfig = Field(default_factory=PrivacyConfig)
     filtering_settings: FilteringConfig = Field(default_factory=FilteringConfig)
     provider_settings: ProviderConfig = Field(default_factory=ProviderConfig)
     migration_settings: MigrationSettings = Field(default_factory=MigrationSettings)

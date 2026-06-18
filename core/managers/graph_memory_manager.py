@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from astrbot.api import logger
+
 from ...storage.graph_store import GraphStore
 from ..processors.graph_extractor import GraphExtractor
 from ..retrieval.graph_vector_retriever import GraphVectorRetriever
@@ -60,15 +62,19 @@ class GraphMemoryManager:
                 f"ids={len(entry_ids)}, entries={len(extracted.entries)}"
             )
         entry_vector_doc_ids: dict[int, int] = {}
-        try:
-            for entry_id, entry in zip(entry_ids, extracted.entries, strict=True):
+        for entry_id, entry in zip(entry_ids, extracted.entries, strict=True):
+            try:
                 vector_doc_id = await self.graph_vector_retriever.add_entry(
                     entry.content,
                     dict(entry.metadata),
                 )
                 entry_vector_doc_ids[entry_id] = vector_doc_id
-        finally:
-            await self.graph_store.update_entry_vector_doc_ids(entry_vector_doc_ids)
+            except Exception as exc:
+                logger.warning(
+                    "graph vector insert failed, keeping keyword graph entry only: "
+                    f"source_memory_id={source_memory_id}, entry_id={entry_id}, error={exc}"
+                )
+        await self.graph_store.update_entry_vector_doc_ids(entry_vector_doc_ids)
 
     async def delete_memory(self, source_memory_id: int) -> None:
         """Delete graph artifacts belonging to one source memory."""

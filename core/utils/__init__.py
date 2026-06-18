@@ -13,6 +13,7 @@ import pytz
 
 from astrbot.api import logger, sp
 from astrbot.api.event import AstrMessageEvent
+from astrbot.api.platform import MessageType
 from astrbot.api.star import Context
 
 from ..processors.text_processor import TextProcessor
@@ -236,36 +237,140 @@ async def get_persona_id(context: Context, event: AstrMessageEvent) -> str | Non
 def get_owner_id(
     config_manager: Any | None,
     event: AstrMessageEvent,
+    *,
+    purpose: str = "default",
 ) -> str | None:
     """
     解析当前长期记忆的 owner_id。
 
-    优先使用显式配置的固定 owner_id；若未配置，则回退到当前发送者 ID，
-    这样至少能先打通「同一人跨 session 共享长期记忆」。
+    默认遵循“安全优先”的 owner 口径：
+    - 若未配置 canonical owner，则保持旧行为：回退到当前发送者 ID
+    - 若配置了 canonical owner，则只有命中受信发送者映射时才使用它
+    - 群聊默认不读取 canonical private-owner 记忆，避免在公开场景泄露私有信息
     """
     try:
-        if config_manager is not None:
-            configured_owner_id = str(
-                config_manager.get("owner_settings.owner_id", "") or ""
-            ).strip()
-            if configured_owner_id:
-                return configured_owner_id
+        owner_context = resolve_owner_context(config_manager, event)
 
-        sender_id = None
-        if hasattr(event, "get_sender_id"):
-            sender_id = event.get_sender_id()
-        elif hasattr(event, "sender_id"):
-            sender_id = event.sender_id
+        if purpose == "recall":
+            if not owner_context["allow_recall"]:
+                return None
+            return owner_context["recall_owner_id"]
 
-        normalized_sender_id = str(sender_id or "").strip()
-        if normalized_sender_id:
-            return normalized_sender_id
+        if purpose == "storage":
+            if not owner_context["allow_storage"]:
+                return None
+            return owner_context["storage_owner_id"]
 
-        fallback_session_id = str(getattr(event, "unified_msg_origin", "") or "").strip()
-        return fallback_session_id or None
+        return owner_context["default_owner_id"]
     except Exception as e:
         logger.debug(f"获取 owner_id 失败: {e}")
         return None
+
+
+def _normalize_identity_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        items = value
+    else:
+        items = re.split(r"[\r\n,]+", str(value))
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
+def resolve_owner_context(
+    config_manager: Any | None,
+    event: AstrMessageEvent,
+) -> dict[str, Any]:
+    configured_owner_id = ""
+    canonical_owner_id = ""
+    trusted_sender_ids: set[str] = set()
+    allow_group_owner_recall = False
+    allow_group_owner_storage = False
+
+    if config_manager is not None:
+        configured_owner_id = str(
+            config_manager.get("owner_settings.owner_id", "") or ""
+        ).strip()
+        canonical_owner_id = str(
+            config_manager.get("privacy_settings.canonical_owner_id", "") or ""
+        ).strip()
+        trusted_sender_ids = set(
+            _normalize_identity_values(
+                config_manager.get("privacy_settings.trusted_sender_ids", [])
+            )
+        )
+        allow_group_owner_recall = bool(
+            config_manager.get("privacy_settings.allow_group_owner_recall", False)
+        )
+        allow_group_owner_storage = bool(
+            config_manager.get("privacy_settings.allow_group_owner_storage", False)
+        )
+
+    if not canonical_owner_id:
+        canonical_owner_id = configured_owner_id
+    if canonical_owner_id:
+        trusted_sender_ids.add(canonical_owner_id)
+
+    sender_id = None
+    if hasattr(event, "get_sender_id"):
+        sender_id = event.get_sender_id()
+    elif hasattr(event, "sender_id"):
+        sender_id = event.sender_id
+
+    normalized_sender_id = str(sender_id or "").strip()
+    session_id = str(getattr(event, "unified_msg_origin", "") or "").strip()
+    is_group_chat = event.get_message_type() == MessageType.GROUP_MESSAGE
+    is_trusted_owner_sender = bool(
+        canonical_owner_id
+        and normalized_sender_id
+        and normalized_sender_id in trusted_sender_ids
+    )
+
+    fallback_owner_id = normalized_sender_id or session_id or None
+
+    # 未配置 canonical owner 时，完全保持旧行为。
+    if not canonical_owner_id:
+        return {
+            "canonical_owner_id": None,
+            "sender_id": normalized_sender_id or None,
+            "is_group_chat": is_group_chat,
+            "is_trusted_owner_sender": False,
+            "allow_recall": True,
+            "allow_storage": True,
+            "recall_owner_id": fallback_owner_id,
+            "storage_owner_id": fallback_owner_id,
+            "default_owner_id": fallback_owner_id,
+        }
+
+    # 配置了 canonical owner 后：
+    # - 本人私聊：读写 canonical owner
+    # - 本人群聊：默认不读/不写 canonical owner，除非显式开启
+    # - 他人私聊：使用自己的 sender_id，形成独立 owner
+    # - 他人群聊：默认不走 owner recall，避免私有记忆进公开场景
+    if is_trusted_owner_sender:
+        allow_recall = not is_group_chat or allow_group_owner_recall
+        allow_storage = not is_group_chat or allow_group_owner_storage
+        recall_owner_id = canonical_owner_id if allow_recall else None
+        storage_owner_id = canonical_owner_id if allow_storage else None
+        default_owner_id = canonical_owner_id
+    else:
+        allow_recall = not is_group_chat and bool(fallback_owner_id)
+        allow_storage = not is_group_chat and bool(fallback_owner_id)
+        recall_owner_id = fallback_owner_id if allow_recall else None
+        storage_owner_id = fallback_owner_id if allow_storage else None
+        default_owner_id = fallback_owner_id
+
+    return {
+        "canonical_owner_id": canonical_owner_id,
+        "sender_id": normalized_sender_id or None,
+        "is_group_chat": is_group_chat,
+        "is_trusted_owner_sender": is_trusted_owner_sender,
+        "allow_recall": allow_recall,
+        "allow_storage": allow_storage,
+        "recall_owner_id": recall_owner_id,
+        "storage_owner_id": storage_owner_id,
+        "default_owner_id": default_owner_id,
+    }
 
 
 def extract_json_from_response(text: str) -> str:
@@ -661,6 +766,8 @@ __all__ = [
     "retry_on_failure",
     "OperationContext",
     "get_persona_id",
+    "get_owner_id",
+    "resolve_owner_context",
     "extract_json_from_response",
     "get_now_datetime",
     "get_now_datetime_from_context",
