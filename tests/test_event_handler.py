@@ -34,6 +34,8 @@ def conversation_manager():
     manager = Mock()
     manager.add_message_from_event = AsyncMock(return_value=Mock(id=1, metadata={}))
     manager.get_session_info = AsyncMock(return_value=Mock(message_count=12))
+    manager.get_recent_sessions = AsyncMock(return_value=[])
+    manager.get_messages = AsyncMock(return_value=[])
     session_metadata = {"last_summarized_index": 0, "pending_summary": None}
 
     async def _get_session_metadata(session_id, key, default=None):
@@ -107,6 +109,16 @@ def _make_event(group: bool = False):
     return event
 
 
+def _make_handler_with_config(memory_engine, memory_processor, conversation_manager, config):
+    return EventHandler(
+        context=Mock(),
+        config_manager=ConfigManager(config),
+        memory_engine=memory_engine,
+        memory_processor=memory_processor,
+        conversation_manager=conversation_manager,
+    )
+
+
 @pytest.mark.asyncio
 async def test_message_dedup_cache_works(handler):
     key = "id:123"
@@ -143,6 +155,137 @@ async def test_handle_memory_recall_injects_extra_user_content(handler, memory_e
 
 
 @pytest.mark.asyncio
+async def test_handle_memory_recall_uses_canonical_owner_for_trusted_private_sender(
+    memory_engine, memory_processor, conversation_manager
+):
+    handler = _make_handler_with_config(
+        memory_engine,
+        memory_processor,
+        conversation_manager,
+        {
+            "recall_engine": {"top_k": 3, "injection_method": "extra_user_content"},
+            "reflection_engine": {"summary_trigger_rounds": 1},
+            "session_manager": {"max_messages_per_session": 100},
+            "owner_settings": {"owner_id": "bia"},
+            "privacy_settings": {
+                "canonical_owner_id": "bia",
+                "trusted_sender_ids": ["qq-bia"],
+            },
+        },
+    )
+    event = _make_event(group=False)
+    event.get_sender_id = Mock(return_value="qq-bia")
+    req = _make_req("query text")
+    memory_engine.search_memories = AsyncMock(return_value=[])
+
+    await handler.handle_memory_recall(event, req)
+
+    call_kwargs = memory_engine.search_memories.await_args.kwargs
+    assert call_kwargs["owner_id"] == "bia"
+
+
+@pytest.mark.asyncio
+async def test_handle_memory_recall_uses_sender_id_profile_for_group_speaker(
+    memory_engine, memory_processor, conversation_manager
+):
+    handler = _make_handler_with_config(
+        memory_engine,
+        memory_processor,
+        conversation_manager,
+        {
+            "recall_engine": {"top_k": 3, "injection_method": "extra_user_content"},
+            "reflection_engine": {"summary_trigger_rounds": 1},
+            "session_manager": {"max_messages_per_session": 100},
+            "owner_settings": {"owner_id": "bia"},
+            "privacy_settings": {
+                "canonical_owner_id": "bia",
+                "trusted_sender_ids": ["qq-bia"],
+            },
+        },
+    )
+    event = _make_event(group=True)
+    event.unified_msg_origin = "napcat_qq:GroupMessage:921086321"
+    event.get_sender_id = Mock(return_value="1294012100")
+    event.get_message_str = Mock(return_value="你知道我是谁吗")
+    req = _make_req("你知道我是谁吗")
+    memory_engine.bm25_retriever = Mock()
+    memory_engine.bm25_retriever.search = AsyncMock(
+        return_value=[
+            Mock(
+                doc_id=985,
+                content="哈维\n\n- QQ 号 `1294012100` 对应的是哈维。",
+                score=0.88,
+                metadata={"source_session": "napcat_qq:GroupMessage:921086321"},
+            )
+        ]
+    )
+
+    await handler.handle_memory_recall(event, req)
+
+    memory_engine.search_memories.assert_not_awaited()
+    memory_engine.bm25_retriever.search.assert_awaited_once()
+    call_kwargs = memory_engine.bm25_retriever.search.await_args.kwargs
+    assert call_kwargs["query"] == "1294012100"
+    assert call_kwargs["session_id"] == "napcat_qq:GroupMessage:921086321"
+    assert call_kwargs["owner_id"] is None
+    assert req.extra_user_content_parts
+    assert "哈维" in req.extra_user_content_parts[0].text
+
+
+@pytest.mark.asyncio
+async def test_handle_memory_recall_falls_back_to_query_profile_search_when_sender_lookup_misses(
+    memory_engine, memory_processor, conversation_manager
+):
+    handler = _make_handler_with_config(
+        memory_engine,
+        memory_processor,
+        conversation_manager,
+        {
+            "recall_engine": {"top_k": 3, "injection_method": "extra_user_content"},
+            "reflection_engine": {"summary_trigger_rounds": 1},
+            "session_manager": {"max_messages_per_session": 100},
+            "owner_settings": {"owner_id": "bia"},
+            "privacy_settings": {
+                "canonical_owner_id": "bia",
+                "trusted_sender_ids": ["qq-bia"],
+            },
+        },
+    )
+    event = _make_event(group=True)
+    event.unified_msg_origin = "napcat_qq:GroupMessage:921086321"
+    event.get_sender_id = Mock(return_value="779058816")
+    event.get_message_str = Mock(return_value="乌鸦先生全名叫啥")
+    req = _make_req("乌鸦先生全名叫啥")
+    memory_engine.bm25_retriever = Mock()
+    memory_engine.bm25_retriever.search = AsyncMock(
+        side_effect=[
+            [],
+            [
+                Mock(
+                    doc_id=986,
+                    content="Edgar Corvus / 乌鸦先生",
+                    score=0.87,
+                    metadata={
+                        "source_session": "napcat_qq:GroupMessage:921086321"
+                    },
+                )
+            ],
+        ]
+    )
+
+    await handler.handle_memory_recall(event, req)
+
+    memory_engine.search_memories.assert_not_awaited()
+    assert memory_engine.bm25_retriever.search.await_count == 2
+    first_call = memory_engine.bm25_retriever.search.await_args_list[0].kwargs
+    second_call = memory_engine.bm25_retriever.search.await_args_list[1].kwargs
+    assert first_call["query"] == "779058816"
+    assert second_call["query"] == "乌鸦先生全名叫啥"
+    assert req.extra_user_content_parts
+    assert "Edgar Corvus" in req.extra_user_content_parts[0].text
+
+
+@pytest.mark.asyncio
 async def test_handle_memory_recall_stores_private_user_message(
     handler, conversation_manager
 ):
@@ -157,6 +300,114 @@ async def test_handle_memory_recall_stores_private_user_message(
         await handler.handle_memory_recall(event, req)
 
     conversation_manager.add_message_from_event.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_memory_recall_injects_cross_platform_continuity_for_trusted_owner(
+    memory_engine, memory_processor, conversation_manager
+):
+    handler = _make_handler_with_config(
+        memory_engine,
+        memory_processor,
+        conversation_manager,
+        {
+            "recall_engine": {
+                "top_k": 0,
+                "injection_method": "extra_user_content",
+                "cross_platform_continuity_enabled": True,
+                "cross_platform_continuity_limit": 1,
+                "cross_platform_continuity_max_chars": 80,
+                "cross_platform_continuity_scan_limit": 4,
+            },
+            "reflection_engine": {"summary_trigger_rounds": 1},
+            "session_manager": {"max_messages_per_session": 100},
+            "owner_settings": {"owner_id": "bia"},
+            "privacy_settings": {
+                "canonical_owner_id": "bia",
+                "trusted_sender_ids": ["bia", "qq-bia"],
+            },
+        },
+    )
+    event = _make_event(group=False)
+    event.get_sender_id = Mock(return_value="qq-bia")
+    req = _make_req("query text")
+
+    other_session = Mock(
+        session_id="webchat:FriendMessage:webchat!bia!pf::rikikihub::rikikihub-test",
+        platform="webchat",
+        participants=["bia"],
+    )
+    conversation_manager.get_recent_sessions = AsyncMock(return_value=[other_session])
+    conversation_manager.get_messages = AsyncMock(
+        return_value=[
+            Mock(role="user", content="阿然你看看另一个窗口"),
+            Mock(role="assistant", content="我在这边提醒你一下，主窗口可能掉了"),
+        ]
+    )
+
+    await handler.handle_memory_recall(event, req)
+
+    memory_engine.search_memories.assert_not_awaited()
+    assert len(req.extra_user_content_parts) == 1
+    continuity_part = req.extra_user_content_parts[0]
+    assert "[跨窗连续性提示]" in continuity_part.text
+    assert "[webchat]" in continuity_part.text
+    assert "主窗口可能掉了" in continuity_part.text
+    assert getattr(continuity_part, "_no_save", False) is True
+
+
+@pytest.mark.asyncio
+async def test_handle_memory_recall_cross_platform_continuity_skips_current_or_unrelated_sessions(
+    memory_engine, memory_processor, conversation_manager
+):
+    handler = _make_handler_with_config(
+        memory_engine,
+        memory_processor,
+        conversation_manager,
+        {
+            "recall_engine": {
+                "top_k": 0,
+                "injection_method": "extra_user_content",
+                "cross_platform_continuity_enabled": True,
+                "cross_platform_continuity_limit": 2,
+                "cross_platform_continuity_scan_limit": 6,
+            },
+            "reflection_engine": {"summary_trigger_rounds": 1},
+            "session_manager": {"max_messages_per_session": 100},
+            "owner_settings": {"owner_id": "bia"},
+            "privacy_settings": {
+                "canonical_owner_id": "bia",
+                "trusted_sender_ids": ["bia", "qq-bia"],
+            },
+        },
+    )
+    event = _make_event(group=False)
+    event.get_sender_id = Mock(return_value="qq-bia")
+    req = _make_req("query text")
+
+    current_session = Mock(
+        session_id="test:private:sid-1",
+        platform="test",
+        participants=["bia"],
+    )
+    unrelated_session = Mock(
+        session_id="default:FriendMessage:other-user",
+        platform="default",
+        participants=["other-user"],
+    )
+    empty_participants_session = Mock(
+        session_id="webchat:FriendMessage:webchat!bia!empty",
+        platform="webchat",
+        participants=[],
+    )
+    conversation_manager.get_recent_sessions = AsyncMock(
+        return_value=[current_session, unrelated_session, empty_participants_session]
+    )
+
+    await handler.handle_memory_recall(event, req)
+
+    conversation_manager.get_messages.assert_not_awaited()
+    assert req.extra_user_content_parts == []
 
 
 @pytest.mark.asyncio
@@ -198,6 +449,36 @@ async def test_handle_memory_reflection_background_storage_uses_event_owner_id(
     assert memory_engine.add_memory.await_count >= 1
     add_call = memory_engine.add_memory.await_args
     assert add_call.kwargs["owner_id"] == "owner-42"
+
+
+@pytest.mark.asyncio
+async def test_handle_memory_reflection_private_non_owner_does_not_write_into_canonical_owner(
+    memory_engine, memory_processor, conversation_manager
+):
+    handler = _make_handler_with_config(
+        memory_engine,
+        memory_processor,
+        conversation_manager,
+        {
+            "recall_engine": {"top_k": 3, "injection_method": "extra_user_content"},
+            "reflection_engine": {"summary_trigger_rounds": 1},
+            "session_manager": {"max_messages_per_session": 100},
+            "owner_settings": {"owner_id": "bia"},
+            "privacy_settings": {
+                "canonical_owner_id": "bia",
+                "trusted_sender_ids": ["rikki-bia"],
+            },
+        },
+    )
+    event = _make_event(group=False)
+    event.get_sender_id = Mock(return_value="other-user")
+    resp = _make_resp("assistant answer")
+
+    await handler.handle_memory_reflection(event, resp)
+    await handler.shutdown()
+
+    add_call = memory_engine.add_memory.await_args
+    assert add_call.kwargs["owner_id"] == "other-user"
 
 
 @pytest.mark.asyncio
@@ -450,8 +731,10 @@ async def test_storage_task_writes_source_window(
         return 1
 
     memory_engine.add_memory = AsyncMock(side_effect=_capture_add_memory)
+    event = _make_event(group=False)
 
     await handler._memory_reflection._storage_task(
+        event=event,
         session_id="s1",
         history_messages=messages,
         persona_id="p1",
@@ -491,8 +774,10 @@ async def test_storage_task_skips_when_already_summarized(
             metadata={},
         )
     ]
+    event = _make_event(group=False)
 
     await handler._memory_reflection._storage_task(
+        event=event,
         session_id="s1",
         history_messages=messages,
         persona_id=None,

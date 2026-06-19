@@ -4,6 +4,7 @@
 """
 
 import asyncio
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 from astrbot.api import logger
@@ -19,6 +20,7 @@ from ..utils import (
     format_memories_for_injection,
     get_owner_id,
     get_persona_id,
+    resolve_owner_context,
 )
 
 if TYPE_CHECKING:
@@ -58,6 +60,222 @@ class MemoryRecall:
         self.conversation_manager = conversation_manager
         self.message_utils = message_utils
         self.injection_adapter = injection_adapter
+
+    @staticmethod
+    def _normalize_identity_values(raw_values) -> set[str]:
+        if raw_values is None:
+            return set()
+        if isinstance(raw_values, str):
+            candidates = raw_values.replace("\n", ",").split(",")
+        elif isinstance(raw_values, (list, tuple, set)):
+            candidates = raw_values
+        else:
+            candidates = [raw_values]
+        return {str(item).strip() for item in candidates if str(item).strip()}
+
+    def _get_continuity_sender_ids(self, owner_context: dict[str, object]) -> set[str]:
+        canonical_owner_id = str(owner_context.get("canonical_owner_id") or "").strip()
+        sender_id = str(owner_context.get("sender_id") or "").strip()
+        is_trusted_owner_sender = bool(owner_context.get("is_trusted_owner_sender"))
+
+        if canonical_owner_id and is_trusted_owner_sender:
+            trusted_ids = self._normalize_identity_values(
+                self.config_manager.get("privacy_settings.trusted_sender_ids", [])
+            )
+            trusted_ids.add(canonical_owner_id)
+            return trusted_ids
+
+        if sender_id:
+            return {sender_id}
+        return set()
+
+    @staticmethod
+    def _truncate_text(text: str, max_chars: int) -> str:
+        normalized = " ".join(str(text or "").split())
+        if max_chars <= 0 or len(normalized) <= max_chars:
+            return normalized
+        if max_chars <= 1:
+            return normalized[:max_chars]
+        return normalized[: max_chars - 1].rstrip() + "…"
+
+    def _build_session_continuity_excerpt(self, messages: list, max_chars: int) -> str:
+        parts: list[str] = []
+        for message in messages:
+            content = self._truncate_text(getattr(message, "content", "") or "", max_chars)
+            if not content:
+                continue
+            role = getattr(message, "role", "")
+            role_label = "阿然" if role == "assistant" else "你" if role == "user" else "系统"
+            parts.append(f"{role_label}: {content}")
+        return " / ".join(parts)
+
+    async def _build_cross_platform_continuity_block(
+        self,
+        current_session_id: str,
+        owner_context: dict[str, object],
+    ) -> str:
+        if not self.config_manager.get(
+            "recall_engine.cross_platform_continuity_enabled", False
+        ):
+            return ""
+
+        continuity_sender_ids = self._get_continuity_sender_ids(owner_context)
+        if not continuity_sender_ids:
+            return ""
+
+        limit = max(
+            1,
+            int(
+                self.config_manager.get(
+                    "recall_engine.cross_platform_continuity_limit", 2
+                )
+            ),
+        )
+        max_chars = max(
+            20,
+            int(
+                self.config_manager.get(
+                    "recall_engine.cross_platform_continuity_max_chars", 120
+                )
+            ),
+        )
+        scan_limit = max(
+            limit,
+            int(
+                self.config_manager.get(
+                    "recall_engine.cross_platform_continuity_scan_limit", 8
+                )
+            ),
+        )
+
+        recent_sessions = await self.conversation_manager.get_recent_sessions(
+            limit=scan_limit
+        )
+        continuity_lines: list[str] = []
+
+        for session in recent_sessions:
+            session_id = str(getattr(session, "session_id", "") or "").strip()
+            if not session_id or session_id == current_session_id:
+                continue
+
+            participants = {
+                str(item).strip()
+                for item in getattr(session, "participants", []) or []
+                if str(item).strip()
+            }
+            if not participants:
+                continue
+            if participants and not participants.intersection(continuity_sender_ids):
+                continue
+
+            messages = await self.conversation_manager.get_messages(
+                session_id=session_id,
+                limit=2,
+                use_cache=False,
+            )
+            excerpt = self._build_session_continuity_excerpt(messages, max_chars)
+            if not excerpt:
+                continue
+
+            platform = str(getattr(session, "platform", "") or "").strip() or "unknown"
+            continuity_lines.append(f"- [{platform}] {excerpt}")
+            if len(continuity_lines) >= limit:
+                break
+
+        if not continuity_lines:
+            return ""
+
+        return (
+            "[跨窗连续性提示]\n"
+            "当前对话仍然是主轴；以下只是你在其他入口刚刚发生的少量近况，可用于保持连续性，不要盖过当前窗口。\n"
+            + "\n".join(continuity_lines)
+        )
+
+    async def _search_group_member_profiles(
+        self,
+        session_id: str,
+        query: str,
+        limit: int,
+        sender_id: str | None = None,
+    ) -> list[SimpleNamespace]:
+        bm25_retriever = getattr(self.memory_engine, "bm25_retriever", None)
+        if bm25_retriever is None:
+            return []
+
+        try:
+            results = await bm25_retriever.search(
+                query=query,
+                limit=limit,
+                session_id=session_id,
+                persona_id=None,
+                owner_id=None,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[{session_id}] 群成员档案 BM25 召回失败: {exc}",
+                exc_info=True,
+            )
+            return []
+
+        matched: list[SimpleNamespace] = []
+        for result in results or []:
+            metadata = getattr(result, "metadata", {}) or {}
+            content = getattr(result, "content", "") or ""
+            source_session = str(
+                metadata.get("source_session") or metadata.get("session_id") or ""
+            ).strip()
+            if source_session != session_id:
+                continue
+            if sender_id and not self._group_profile_matches_sender(
+                metadata, content, sender_id
+            ):
+                continue
+            matched.append(
+                SimpleNamespace(
+                    doc_id=getattr(result, "doc_id", None),
+                    content=content,
+                    final_score=float(getattr(result, "score", 0.0) or 0.0),
+                    metadata=metadata,
+                )
+            )
+        return matched
+
+    def _group_profile_matches_sender(
+        self,
+        metadata: dict[str, object],
+        content: str,
+        sender_id: str,
+    ) -> bool:
+        normalized_sender_id = str(sender_id or "").strip()
+        if not normalized_sender_id:
+            return False
+
+        sender_ids = self._normalize_identity_values(
+            metadata.get("member_sender_ids")
+            or metadata.get("sender_ids")
+            or metadata.get("sender_id")
+            or metadata.get("qq")
+        )
+        if normalized_sender_id in sender_ids:
+            return True
+        return normalized_sender_id in str(content or "")
+
+    async def _search_group_member_profile_for_sender(
+        self,
+        session_id: str,
+        sender_id: str,
+        limit: int,
+    ) -> list[SimpleNamespace]:
+        normalized_sender_id = str(sender_id or "").strip()
+        if not normalized_sender_id:
+            return []
+
+        return await self._search_group_member_profiles(
+            session_id=session_id,
+            query=normalized_sender_id,
+            limit=max(limit, 5),
+            sender_id=normalized_sender_id,
+        )
 
     async def handle_memory_recall(
         self, event: AstrMessageEvent, req: ProviderRequest
@@ -151,55 +369,103 @@ class MemoryRecall:
                 # 注意：on_llm_request 钩子在 _ensure_persona_and_skills 之前触发，
                 # 因此不能直接依赖 req.system_prompt 已注入人格，需自行走完整优先级。
                 persona_id = await get_persona_id(self.context, event)
-                owner_id = get_owner_id(self.config_manager, event)
+                owner_context = resolve_owner_context(self.config_manager, event)
+                owner_id = get_owner_id(self.config_manager, event, purpose="recall")
+                recalled_memories = []
 
-                recall_owner_id = owner_id if use_owner_filtering else None
-                recall_session_id = session_id if use_session_filtering else None
-                recall_persona_id = persona_id if use_persona_filtering else None
-
-                # 使用原始用户输入作为召回关键字
-                query_for_search = actual_query
-
-                # 上下文扩展：拼接最近2轮对话作为查询，提升检索精准度
-                if self.config_manager.get(
-                    "recall_engine.inject_with_recent_context", False
-                ):
-                    try:
-                        recent_messages = (
-                            await self.conversation_manager.get_context(
-                                session_id, max_messages=5
-                            )
+                if use_owner_filtering and owner_id is None:
+                    logger.info(
+                        f"[{session_id}] 当前上下文不允许读取 owner 私有记忆，"
+                        f"sender_id={owner_context.get('sender_id') or 'unknown'}"
+                    )
+                    if event.get_message_type() != MessageType.GROUP_MESSAGE:
+                        return
+                    group_sender_id = str(event.get_sender_id() or "").strip()
+                    used_sender_profile = False
+                    recalled_memories = (
+                        await self._search_group_member_profile_for_sender(
+                            session_id=session_id,
+                            sender_id=group_sender_id,
+                            limit=top_k,
                         )
-                        if recent_messages and len(recent_messages) > 1:
-                            # recent_messages 按 timestamp DESC 排列（最新在前）
-                            # 跳过索引0（当前消息），取后续消息作为扩展上下文
-                            context_parts = []
-                            for msg in reversed(recent_messages[1:]):
-                                content = msg.get("content", "")
-                                if content and content.strip():
-                                    context_parts.append(content.strip())
-                            if context_parts:
-                                expanded = " | ".join(context_parts)
-                                query_for_search = expanded + " " + actual_query
-                                logger.info(
-                                    f"[{session_id}] 上下文扩展查询: "
-                                    f"{len(context_parts)}条历史消息 + 当前消息"
+                    )
+                    if recalled_memories:
+                        used_sender_profile = True
+                        logger.info(
+                            f"[{session_id}] 已按 sender_id={group_sender_id} 命中 "
+                            f"{len(recalled_memories)} 条群成员档案记忆"
+                        )
+                    else:
+                        recalled_memories = await self._search_group_member_profiles(
+                            session_id=session_id,
+                            query=actual_query,
+                            limit=top_k,
+                        )
+                    if not recalled_memories:
+                        return
+                    if not used_sender_profile:
+                        logger.info(
+                            f"[{session_id}] 已按查询命中 {len(recalled_memories)} 条群成员档案记忆"
+                        )
+
+                if not recalled_memories:
+                    continuity_block = await self._build_cross_platform_continuity_block(
+                        session_id,
+                        owner_context,
+                    )
+                    if continuity_block:
+                        req.extra_user_content_parts.append(
+                            TextPart(text=continuity_block).mark_as_temp()
+                        )
+                        logger.info(f"[{session_id}] 已注入跨窗连续性提示")
+
+                    recall_owner_id = owner_id if use_owner_filtering else None
+                    recall_session_id = session_id if use_session_filtering else None
+                    recall_persona_id = persona_id if use_persona_filtering else None
+
+                    # 使用原始用户输入作为召回关键字
+                    query_for_search = actual_query
+
+                    # 上下文扩展：拼接最近2轮对话作为查询，提升检索精准度
+                    if self.config_manager.get(
+                        "recall_engine.inject_with_recent_context", False
+                    ):
+                        try:
+                            recent_messages = (
+                                await self.conversation_manager.get_context(
+                                    session_id, max_messages=5
                                 )
-                    except Exception as e:
-                        logger.warning(f"[{session_id}] 获取上下文扩展失败: {e}")
+                            )
+                            if recent_messages and len(recent_messages) > 1:
+                                # recent_messages 按 timestamp DESC 排列（最新在前）
+                                # 跳过索引0（当前消息），取后续消息作为扩展上下文
+                                context_parts = []
+                                for msg in reversed(recent_messages[1:]):
+                                    content = msg.get("content", "")
+                                    if content and content.strip():
+                                        context_parts.append(content.strip())
+                                if context_parts:
+                                    expanded = " | ".join(context_parts)
+                                    query_for_search = expanded + " " + actual_query
+                                    logger.info(
+                                        f"[{session_id}] 上下文扩展查询: "
+                                        f"{len(context_parts)}条历史消息 + 当前消息"
+                                    )
+                        except Exception as e:
+                            logger.warning(f"[{session_id}] 获取上下文扩展失败: {e}")
 
-                # 执行记忆召回
-                logger.info(
-                    f"[{session_id}] 开始记忆召回，查询='{query_for_search[:80]}...'"
-                )
+                    # 执行记忆召回
+                    logger.info(
+                        f"[{session_id}] 开始记忆召回，查询='{query_for_search[:80]}...'"
+                    )
 
-                recalled_memories = await self.memory_engine.search_memories(
-                    query=query_for_search,
-                    k=self.config_manager.get("recall_engine.top_k", 5),
-                    owner_id=recall_owner_id,
-                    session_id=recall_session_id,
-                    persona_id=recall_persona_id,
-                )
+                    recalled_memories = await self.memory_engine.search_memories(
+                        query=query_for_search,
+                        k=self.config_manager.get("recall_engine.top_k", 5),
+                        owner_id=recall_owner_id,
+                        session_id=recall_session_id,
+                        persona_id=recall_persona_id,
+                    )
 
                 if recalled_memories:
                     logger.info(
