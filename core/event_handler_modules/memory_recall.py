@@ -109,6 +109,48 @@ class MemoryRecall:
             parts.append(f"{role_label}: {content}")
         return " / ".join(parts)
 
+    @staticmethod
+    def _looks_like_stackchan_value(raw_value: object) -> bool:
+        text = str(raw_value or "").strip().lower()
+        if not text:
+            return False
+        return (
+            text == "stackchan"
+            or "pf::stackchan::" in text
+            or text.startswith("stackchan-")
+            or text.startswith("stackchan:")
+            or "stackchan" in text
+        )
+
+    def _should_skip_recall_for_stackchan(
+        self, event: AstrMessageEvent, req: ProviderRequest
+    ) -> bool:
+        if not self.config_manager.get("recall_engine.disable_for_stackchan", False):
+            return False
+
+        candidates = [
+            getattr(req, "session_id", None),
+            getattr(event, "session_id", None),
+            getattr(event, "conversation_id", None),
+            getattr(event, "unified_msg_origin", None),
+            getattr(event, "client_platform", None),
+            getattr(event, "platform_name", None),
+            getattr(event, "platform", None),
+            getattr(event, "source", None),
+        ]
+
+        get_platform_name = getattr(event, "get_platform_name", None)
+        if callable(get_platform_name):
+            try:
+                candidates.append(get_platform_name())
+            except Exception:
+                pass
+
+        for value in candidates:
+            if self._looks_like_stackchan_value(value):
+                return True
+        return False
+
     async def _build_cross_platform_continuity_block(
         self,
         current_session_id: str,
@@ -341,6 +383,10 @@ class MemoryRecall:
                     await self.message_utils.enforce_message_limit(session_id)
 
                 # 若 top_k <= 0，跳过记忆检索和注入，但上述清理和消息存储已执行
+                if self._should_skip_recall_for_stackchan(event, req):
+                    logger.info(f"[{session_id}] StackChan 轻量模式已启用，跳过记忆检索和注入")
+                    return
+
                 top_k = self.config_manager.get("recall_engine.top_k", 5)
                 if top_k <= 0:
                     logger.info(

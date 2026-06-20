@@ -13,7 +13,7 @@ from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 
 from ..base.config_manager import ConfigManager
-from ..utils import get_owner_id, get_persona_id
+from ..utils import get_owner_id, get_persona_id, resolve_owner_context
 
 
 def _json_result(data: dict[str, Any]) -> str:
@@ -98,12 +98,24 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
             use_session_filtering = filtering_config.get("use_session_filtering", False)
 
             session_id = event.unified_msg_origin
-            owner_id = get_owner_id(self.config_manager, event)
+            owner_context = resolve_owner_context(self.config_manager, event)
+            owner_id = get_owner_id(self.config_manager, event, purpose="recall")
             persona_id = (
                 await get_persona_id(self.context, event)
                 if use_persona_filtering
                 else None
             )
+
+            if use_owner_filtering and owner_id is None:
+                return _json_result(
+                    {
+                        "query": cleaned_query,
+                        "count": 0,
+                        "results": [],
+                        "blocked_by_owner_policy": True,
+                        "sender_id": owner_context.get("sender_id"),
+                    }
+                )
 
             recall_owner_id = owner_id if use_owner_filtering else None
             recall_session_id = session_id if use_session_filtering else None

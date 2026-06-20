@@ -121,9 +121,17 @@ class MemoryMemorizeTool(FunctionTool[AstrAgentContext]):
         try:
             event = context.context.event
             session_id = event.unified_msg_origin
-            owner_id = get_owner_id(self.config_manager, event)
+            owner_id = get_owner_id(self.config_manager, event, purpose="storage")
             persona_id = await get_persona_id(self.context, event)
             is_group_chat = event.get_message_type() == MessageType.GROUP_MESSAGE
+
+            if owner_id is None:
+                return _json_result(
+                    {
+                        "memorized": False,
+                        "error": "blocked_by_owner_policy",
+                    }
+                )
 
             structured_data = {
                 "summary": cleaned_memory,

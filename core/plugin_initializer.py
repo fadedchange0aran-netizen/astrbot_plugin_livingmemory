@@ -545,6 +545,7 @@ class PluginInitializer:
             # 初始化索引验证器并自动重建索引
             self.index_validator = IndexValidator(str(db_path), self.db)
             await self._auto_rebuild_index_if_needed()
+            await self._auto_rebuild_graph_if_needed()
 
             # 异步初始化 TextProcessor
             if self.memory_engine and hasattr(self.memory_engine, "text_processor"):
@@ -668,6 +669,44 @@ class PluginInitializer:
 
         except Exception as e:
             logger.error(f"自动重建索引失败: {e}", exc_info=True)
+
+    async def _auto_rebuild_graph_if_needed(self):
+        """在迁移导入后，如果图谱为空则自动补建图谱索引。"""
+        try:
+            if (
+                not self.memory_engine
+                or self.memory_engine.graph_memory_manager is None
+                or self.memory_engine.graph_store is None
+            ):
+                return
+
+            stats = await self.memory_engine.get_statistics()
+            total_memories = int(stats.get("total_memories", 0) or 0)
+            graph_entries = int(stats.get("graph_entries", 0) or 0)
+
+            if total_memories <= 0:
+                logger.info("图谱自动重建跳过：当前没有可重建的记忆文档。")
+                return
+
+            if graph_entries >= total_memories:
+                logger.info(
+                    "图谱自动重建跳过：图谱已存在完整数据"
+                    f"（graph_entries={graph_entries}, total_memories={total_memories}）。"
+                )
+                return
+
+            logger.info(
+                "检测到图谱数据不足，开始自动重建图谱。"
+                f" total_memories={total_memories}, graph_entries={graph_entries}"
+            )
+            result = await self.memory_engine.rebuild_graph_index()
+            logger.info(
+                "图谱自动重建完成: "
+                f"rebuilt={result.get('rebuilt', 0)}, "
+                f"skipped={result.get('skipped', 0)}"
+            )
+        except Exception as e:
+            logger.error(f"自动重建图谱失败: {e}", exc_info=True)
 
     async def _repair_message_counts(self, conversation_store: ConversationStore):
         """修复会话表中 message_count 与实际消息数量不一致的问题"""
