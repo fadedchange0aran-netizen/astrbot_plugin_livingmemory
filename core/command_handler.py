@@ -14,7 +14,7 @@ from .base.config_manager import ConfigManager
 from .i18n_backend import t, t_list
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
-from .utils import get_owner_id
+from .utils import get_now_datetime, get_owner_id
 from .validators.index_validator import IndexValidator
 
 
@@ -94,7 +94,9 @@ class CommandHandler:
             # 格式化时间
             last_update = t("common.never")
             if stats.get("newest_memory"):
-                last_update = datetime.fromtimestamp(stats["newest_memory"]).strftime(
+                last_update = datetime.fromtimestamp(
+                    stats["newest_memory"], tz=get_now_datetime().tzinfo
+                ).strftime(
                     "%Y-%m-%d %H:%M:%S"
                 )
 

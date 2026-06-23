@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -189,11 +190,40 @@ class MemoryRecall:
                 )
             ),
         )
+        max_age_hours = max(
+            0.0,
+            float(
+                self.config_manager.get(
+                    "recall_engine.cross_platform_continuity_max_age_hours", 6
+                )
+            ),
+        )
+        max_age_seconds = max_age_hours * 3600
+        recent_window_minutes = max(
+            0.0,
+            float(
+                self.config_manager.get(
+                    "recall_engine.cross_platform_continuity_recent_window_minutes", 30
+                )
+            ),
+        )
+        recent_window_seconds = recent_window_minutes * 60
+        recent_limit = max(
+            limit,
+            int(
+                self.config_manager.get(
+                    "recall_engine.cross_platform_continuity_recent_limit",
+                    max(limit, 2),
+                )
+            ),
+        )
+        now_ts = time.time()
 
         recent_sessions = await self.conversation_manager.get_recent_sessions(
             limit=scan_limit
         )
-        continuity_lines: list[str] = []
+        recent_lines: list[str] = []
+        fallback_lines: list[str] = []
 
         for session in recent_sessions:
             session_id = str(getattr(session, "session_id", "") or "").strip()
@@ -209,6 +239,17 @@ class MemoryRecall:
                 continue
             if participants and not participants.intersection(continuity_sender_ids):
                 continue
+            last_active_at = getattr(session, "last_active_at", None)
+            try:
+                last_active_ts = float(last_active_at)
+            except (TypeError, ValueError):
+                last_active_ts = None
+            if (
+                max_age_seconds > 0
+                and last_active_ts is not None
+                and (now_ts - last_active_ts) > max_age_seconds
+            ):
+                continue
 
             messages = await self.conversation_manager.get_messages(
                 session_id=session_id,
@@ -220,10 +261,24 @@ class MemoryRecall:
                 continue
 
             platform = str(getattr(session, "platform", "") or "").strip() or "unknown"
-            continuity_lines.append(f"- [{platform}] {excerpt}")
-            if len(continuity_lines) >= limit:
-                break
+            line = f"- [{platform}] {excerpt}"
+            is_recent = (
+                recent_window_seconds > 0
+                and last_active_ts is not None
+                and (now_ts - last_active_ts) <= recent_window_seconds
+            )
+            if is_recent:
+                recent_lines.append(line)
+                if len(recent_lines) >= recent_limit:
+                    break
+                continue
 
+            if not recent_lines and len(fallback_lines) < limit:
+                fallback_lines.append(line)
+                if len(fallback_lines) >= limit:
+                    break
+
+        continuity_lines = recent_lines[:recent_limit] if recent_lines else fallback_lines[:limit]
         if not continuity_lines:
             return ""
 

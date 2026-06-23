@@ -170,6 +170,24 @@
                 "type": "int",
                 "default": 8
             },
+            "cross_platform_continuity_max_age_hours": {
+                "description": "跨窗提示最大回看时长",
+                "hint": "只注入最近多少小时内活跃过的其他入口。建议 1-12；填 0 表示不按时间淘汰。",
+                "type": "float",
+                "default": 6.0
+            },
+            "cross_platform_continuity_recent_window_minutes": {
+                "description": "跨窗扩容近窗分钟数",
+                "hint": "当其他入口在这段时间内足够新时，允许临时多注入几条。填 30 表示最近半小时内可扩容。",
+                "type": "float",
+                "default": 30.0
+            },
+            "cross_platform_continuity_recent_limit": {
+                "description": "近窗跨窗提示条数",
+                "hint": "近窗内最多附带多少条其他入口动态。通常配合基础条数 1 使用，建议 2。",
+                "type": "int",
+                "default": 2
+            },
             "disable_for_stackchan": {
                 "description": "对 StackChan 跳过自动召回",
                 "hint": "开启后，StackChan 会话仍会正常存储消息与后续反思，但会跳过自动记忆检索和注入，用于降低机器人语音链延迟。",

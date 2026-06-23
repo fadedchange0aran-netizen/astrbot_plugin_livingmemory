@@ -92,6 +92,15 @@ class RecallEngineConfig(BaseModel):
     cross_platform_continuity_scan_limit: int = Field(
         default=8, ge=1, le=50, description="跨窗扫描会话上限"
     )
+    cross_platform_continuity_max_age_hours: float = Field(
+        default=6.0, ge=0.0, le=168.0, description="跨窗提示允许回看的最大小时数"
+    )
+    cross_platform_continuity_recent_window_minutes: float = Field(
+        default=30.0, ge=0.0, le=1440.0, description="触发扩容注入的近窗分钟数"
+    )
+    cross_platform_continuity_recent_limit: int = Field(
+        default=2, ge=1, le=10, description="近窗内允许的跨窗提示条数"
+    )
     disable_for_stackchan: bool = Field(
         default=False, description="是否对 StackChan 会话跳过自动记忆召回和注入"
     )

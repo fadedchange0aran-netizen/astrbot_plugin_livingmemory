@@ -507,7 +507,9 @@ def format_memories_for_injection(memories: list) -> str:
             time_str = ""
             if timestamp:
                 try:
-                    dt = datetime.fromtimestamp(validate_timestamp(timestamp))
+                    dt = datetime.fromtimestamp(
+                        validate_timestamp(timestamp), tz=get_now_datetime().tzinfo
+                    )
                     time_str = dt.strftime("%Y-%m-%d %H:%M")
                 except Exception:
                     pass

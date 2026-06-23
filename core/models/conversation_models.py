@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+import pytz
+
 from astrbot.api import logger
 
 
@@ -156,7 +158,8 @@ class Message:
             )
 
             # 格式化时间
-            time_str = datetime.fromtimestamp(self.timestamp).strftime(
+            shanghai_tz = pytz.timezone("Asia/Shanghai")
+            time_str = datetime.fromtimestamp(self.timestamp, tz=shanghai_tz).strftime(
                 "%Y-%m-%d %H:%M:%S"
             )
 

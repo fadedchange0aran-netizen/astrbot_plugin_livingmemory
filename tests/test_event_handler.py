@@ -2,6 +2,7 @@
 Tests for EventHandler core behaviors.
 """
 
+import time
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -318,6 +319,7 @@ async def test_handle_memory_recall_injects_cross_platform_continuity_for_truste
                 "cross_platform_continuity_limit": 1,
                 "cross_platform_continuity_max_chars": 80,
                 "cross_platform_continuity_scan_limit": 4,
+                "cross_platform_continuity_max_age_hours": 6,
             },
             "reflection_engine": {"summary_trigger_rounds": 1},
             "session_manager": {"max_messages_per_session": 100},
@@ -336,6 +338,7 @@ async def test_handle_memory_recall_injects_cross_platform_continuity_for_truste
         session_id="webchat:FriendMessage:webchat!bia!pf::rikikihub::rikikihub-test",
         platform="webchat",
         participants=["bia"],
+        last_active_at=time.time(),
     )
     conversation_manager.get_recent_sessions = AsyncMock(return_value=[other_session])
     conversation_manager.get_messages = AsyncMock(
@@ -371,6 +374,7 @@ async def test_handle_memory_recall_cross_platform_continuity_skips_current_or_u
                 "cross_platform_continuity_enabled": True,
                 "cross_platform_continuity_limit": 2,
                 "cross_platform_continuity_scan_limit": 6,
+                "cross_platform_continuity_max_age_hours": 6,
             },
             "reflection_engine": {"summary_trigger_rounds": 1},
             "session_manager": {"max_messages_per_session": 100},
@@ -389,16 +393,19 @@ async def test_handle_memory_recall_cross_platform_continuity_skips_current_or_u
         session_id="test:private:sid-1",
         platform="test",
         participants=["bia"],
+        last_active_at=time.time(),
     )
     unrelated_session = Mock(
         session_id="default:FriendMessage:other-user",
         platform="default",
         participants=["other-user"],
+        last_active_at=time.time(),
     )
     empty_participants_session = Mock(
         session_id="webchat:FriendMessage:webchat!bia!empty",
         platform="webchat",
         participants=[],
+        last_active_at=time.time(),
     )
     conversation_manager.get_recent_sessions = AsyncMock(
         return_value=[current_session, unrelated_session, empty_participants_session]
@@ -408,6 +415,125 @@ async def test_handle_memory_recall_cross_platform_continuity_skips_current_or_u
 
     conversation_manager.get_messages.assert_not_awaited()
     assert req.extra_user_content_parts == []
+
+
+@pytest.mark.asyncio
+async def test_handle_memory_recall_cross_platform_continuity_skips_stale_sessions(
+    memory_engine, memory_processor, conversation_manager
+):
+    handler = _make_handler_with_config(
+        memory_engine,
+        memory_processor,
+        conversation_manager,
+        {
+            "recall_engine": {
+                "top_k": 0,
+                "injection_method": "extra_user_content",
+                "cross_platform_continuity_enabled": True,
+                "cross_platform_continuity_limit": 1,
+                "cross_platform_continuity_scan_limit": 4,
+                "cross_platform_continuity_max_age_hours": 6,
+            },
+            "reflection_engine": {"summary_trigger_rounds": 1},
+            "session_manager": {"max_messages_per_session": 100},
+            "owner_settings": {"owner_id": "bia"},
+            "privacy_settings": {
+                "canonical_owner_id": "bia",
+                "trusted_sender_ids": ["bia", "qq-bia"],
+            },
+        },
+    )
+    event = _make_event(group=False)
+    event.get_sender_id = Mock(return_value="qq-bia")
+    req = _make_req("query text")
+
+    stale_session = Mock(
+        session_id="napcat_qq:GroupMessage:921086321",
+        platform="napcat_qq",
+        participants=["bia"],
+        last_active_at=time.time() - (7 * 3600),
+    )
+    conversation_manager.get_recent_sessions = AsyncMock(return_value=[stale_session])
+
+    await handler.handle_memory_recall(event, req)
+
+    conversation_manager.get_messages.assert_not_awaited()
+    assert req.extra_user_content_parts == []
+
+
+@pytest.mark.asyncio
+async def test_handle_memory_recall_cross_platform_continuity_uses_two_recent_sessions(
+    memory_engine, memory_processor, conversation_manager
+):
+    handler = _make_handler_with_config(
+        memory_engine,
+        memory_processor,
+        conversation_manager,
+        {
+            "recall_engine": {
+                "top_k": 0,
+                "injection_method": "extra_user_content",
+                "cross_platform_continuity_enabled": True,
+                "cross_platform_continuity_limit": 1,
+                "cross_platform_continuity_scan_limit": 6,
+                "cross_platform_continuity_max_age_hours": 6,
+                "cross_platform_continuity_recent_window_minutes": 30,
+                "cross_platform_continuity_recent_limit": 2,
+            },
+            "reflection_engine": {"summary_trigger_rounds": 1},
+            "session_manager": {"max_messages_per_session": 100},
+            "owner_settings": {"owner_id": "bia"},
+            "privacy_settings": {
+                "canonical_owner_id": "bia",
+                "trusted_sender_ids": ["bia", "qq-bia"],
+            },
+        },
+    )
+    event = _make_event(group=False)
+    event.get_sender_id = Mock(return_value="qq-bia")
+    req = _make_req("query text")
+
+    recent_session_1 = Mock(
+        session_id="webchat:FriendMessage:recent-1",
+        platform="webchat",
+        participants=["bia"],
+        last_active_at=time.time() - (10 * 60),
+    )
+    recent_session_2 = Mock(
+        session_id="napcat_qq:FriendMessage:recent-2",
+        platform="napcat_qq",
+        participants=["bia"],
+        last_active_at=time.time() - (20 * 60),
+    )
+    older_session = Mock(
+        session_id="telegram:FriendMessage:older",
+        platform="telegram",
+        participants=["bia"],
+        last_active_at=time.time() - (2 * 3600),
+    )
+    conversation_manager.get_recent_sessions = AsyncMock(
+        return_value=[recent_session_1, recent_session_2, older_session]
+    )
+    conversation_manager.get_messages = AsyncMock(
+        side_effect=[
+            [
+                Mock(role="user", content="网页那边刚说了 A"),
+                Mock(role="assistant", content="我在 webchat 回了 A"),
+            ],
+            [
+                Mock(role="user", content="QQ 那边刚说了 B"),
+                Mock(role="assistant", content="我在 qq 回了 B"),
+            ],
+        ]
+    )
+
+    await handler.handle_memory_recall(event, req)
+
+    assert len(req.extra_user_content_parts) == 1
+    continuity_part = req.extra_user_content_parts[0]
+    assert "[webchat]" in continuity_part.text
+    assert "[napcat_qq]" in continuity_part.text
+    assert "[telegram]" not in continuity_part.text
 
 
 @pytest.mark.asyncio

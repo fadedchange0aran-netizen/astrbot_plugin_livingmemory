@@ -10,11 +10,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import pytz
 from astrbot.api import logger
 
 from ..models.conversation_models import Message
 from ..models.memory_atom import MemoryAtom
 from .atom_classifier import classify_atoms
+
+
+def _get_shanghai_now() -> datetime:
+    return datetime.now(pytz.timezone("Asia/Shanghai"))
 
 
 class MemoryProcessor:
@@ -130,7 +135,7 @@ class MemoryProcessor:
         Returns:
             str: 包含人格提示的 system_prompt
         """
-        current_date = datetime.now().strftime("%Y-%m-%d %H:%M")
+        current_date = _get_shanghai_now().strftime("%Y-%m-%d %H:%M")
         base_prompt = (
             "你正在总结对话记忆。请严格按照JSON格式输出。\n"
             f"当前日期时间: {current_date}\n"
@@ -321,7 +326,7 @@ class MemoryProcessor:
 
         # 2. 选择合适的提示词模板
         # 使用 replace 而非 format，避免对话内容中的大括号导致解析错误
-        current_date = datetime.now().strftime("%Y-%m-%d %H:%M")
+        current_date = _get_shanghai_now().strftime("%Y-%m-%d %H:%M")
         if is_group_chat:
             prompt = self.group_chat_prompt.replace("{conversation}", conversation_text)
         else:
@@ -432,7 +437,10 @@ class MemoryProcessor:
 
     @staticmethod
     def _format_sender_info(msg: Message) -> str:
-        time_str = datetime.fromtimestamp(msg.timestamp).strftime("%Y-%m-%d %H:%M:%S")
+        shanghai_tz = pytz.timezone("Asia/Shanghai")
+        time_str = datetime.fromtimestamp(
+            msg.timestamp, tz=shanghai_tz
+        ).strftime("%Y-%m-%d %H:%M:%S")
         display_name = msg.sender_name if msg.sender_name else msg.sender_id or "未知"
         is_bot = msg.metadata.get("is_bot_message", False) or msg.role == "assistant"
         if is_bot:
